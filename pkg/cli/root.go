@@ -12,6 +12,7 @@ import (
 
 	"github.com/GoCodeAlone/workflow/interfaces"
 
+	atlasdriver "github.com/GoCodeAlone/workflow-plugin-migrations/internal/atlas"
 	"github.com/GoCodeAlone/workflow-plugin-migrations/internal/golangmigrate"
 	"github.com/GoCodeAlone/workflow-plugin-migrations/internal/goose"
 )
@@ -38,20 +39,23 @@ func NewRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "migrate",
 		Short: "Database migration commands",
-		Long:  "Run, inspect, and test database migrations via golang-migrate or goose.",
+		Long:  "Run, inspect, and test database migrations via golang-migrate, goose, or atlas.",
 	}
 	root.AddCommand(
 		newUpCmd(),
 		newDownCmd(),
 		newStatusCmd(),
 		newGotoCmd(),
+		newLintCmd(),
+		newTestCmd(),
+		newTenantEnsureCmd(),
 	)
 	return root
 }
 
 // sharedFlags adds the common driver/DSN/source-dir flags to a command.
 func sharedFlags(cmd *cobra.Command) {
-	cmd.Flags().String("driver", "golang-migrate", "Migration driver (golang-migrate|goose)")
+	cmd.Flags().String("driver", "golang-migrate", "Migration driver (golang-migrate|goose|atlas)")
 	cmd.Flags().String("source-dir", "", "Directory containing migration files (required)")
 	cmd.Flags().String("dsn", "", "Database connection string (overrides DATABASE_URL env var)")
 	_ = cmd.MarkFlagRequired("source-dir")
@@ -75,8 +79,10 @@ func buildDriverAndRequest(cmd *cobra.Command) (interfaces.MigrationDriver, inte
 		d = golangmigrate.New()
 	case "goose":
 		d = goose.New()
+	case "atlas":
+		d = atlasdriver.New()
 	default:
-		return nil, interfaces.MigrationRequest{}, fmt.Errorf("unknown driver %q (supported: golang-migrate, goose)", driverName)
+		return nil, interfaces.MigrationRequest{}, fmt.Errorf("unknown driver %q (supported: golang-migrate, goose, atlas)", driverName)
 	}
 
 	req := interfaces.MigrationRequest{
