@@ -30,16 +30,9 @@ func TestGooseDriver_UpDownStatus(t *testing.T) {
 	defer h.Close(t)
 
 	dir := t.TempDir()
-	writeGooseSQL(t, dir, "00001_users.sql", `-- +goose Up
-CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);
--- +goose Down
-DROP TABLE IF EXISTS users;
-`)
-	writeGooseSQL(t, dir, "00002_posts.sql", `-- +goose Up
-CREATE TABLE posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL);
--- +goose Down
-DROP TABLE IF EXISTS posts;
-`)
+	// Goose v3 expects combined SQL files with -- +goose Up/Down annotations.
+	writeGooseSQL(t, dir, "00001_users.sql", "-- +goose Up\nCREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);\n-- +goose Down\nDROP TABLE IF EXISTS users;\n")
+	writeGooseSQL(t, dir, "00002_posts.sql", "-- +goose Up\nCREATE TABLE posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL);\n-- +goose Down\nDROP TABLE IF EXISTS posts;\n")
 
 	ctx := context.Background()
 	d := goosedriver.New()

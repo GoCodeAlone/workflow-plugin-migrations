@@ -17,11 +17,14 @@ import (
 //go:embed corpus
 var corpusFS embed.FS
 
+//go:embed corpus_goose
+var corpusGooseFS embed.FS
+
 // Suite runs the conformance test matrix against a given MigrationDriver.
 type Suite struct {
 	// DSN is the PostgreSQL connection string to use.
 	DSN string
-	// SourceDir is overridden per sub-test with a temp dir containing the corpus.
+	// sourceDir is set per-run with the extracted corpus.
 	sourceDir string
 }
 
@@ -31,9 +34,11 @@ func NewSuite(dsn string) *Suite {
 }
 
 // Run executes all conformance cases against the given driver.
+// The corpus format is selected based on the driver name (goose uses combined
+// SQL files with -- +goose Up/Down annotations; others use paired .up.sql/.down.sql files).
 func (s *Suite) Run(t *testing.T, d interfaces.MigrationDriver) {
 	t.Helper()
-	dir := s.extractCorpus(t)
+	dir := s.extractCorpus(t, d.Name())
 	s.sourceDir = dir
 
 	t.Run("FreshUpAll", func(t *testing.T) { s.testFreshUpAll(t, d) })
@@ -81,7 +86,6 @@ func (s *Suite) testIdempotentUp(t *testing.T, d interfaces.MigrationDriver) {
 	t.Helper()
 	ctx := context.Background()
 
-	// Apply all first.
 	if _, err := d.Up(ctx, s.req()); err != nil {
 		t.Fatalf("initial Up() error: %v", err)
 	}
@@ -189,16 +193,28 @@ func (s *Suite) testStatusReflectsState(t *testing.T, d interfaces.MigrationDriv
 	}
 }
 
-// extractCorpus copies embedded corpus SQL files to a temporary directory and
-// returns its path.
-func (s *Suite) extractCorpus(t *testing.T) string {
+// extractCorpus copies the appropriate embedded corpus SQL files to a temporary
+// directory and returns its path. driverName selects between corpus formats:
+// "goose" gets combined -- +goose Up/Down files; others get paired .up.sql/.down.sql.
+func (s *Suite) extractCorpus(t *testing.T, driverName string) string {
 	t.Helper()
 	dir := t.TempDir()
-	err := fs.WalkDir(corpusFS, "corpus", func(path string, de fs.DirEntry, err error) error {
+
+	var srcFS embed.FS
+	var srcDir string
+	if driverName == "goose" {
+		srcFS = corpusGooseFS
+		srcDir = "corpus_goose"
+	} else {
+		srcFS = corpusFS
+		srcDir = "corpus"
+	}
+
+	err := fs.WalkDir(srcFS, srcDir, func(path string, de fs.DirEntry, err error) error {
 		if err != nil || de.IsDir() {
 			return err
 		}
-		data, err := corpusFS.ReadFile(path)
+		data, err := srcFS.ReadFile(path)
 		if err != nil {
 			return err
 		}

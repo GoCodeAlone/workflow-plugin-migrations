@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -143,10 +144,11 @@ func (d *Driver) Goto(_ context.Context, req interfaces.MigrationRequest, target
 // the pgx/v5 driver.
 func newMigrate(req interfaces.MigrationRequest) (*migrate.Migrate, error) {
 	dsn := req.DSN
-	// golang-migrate pgx/v5 driver expects pgx5:// scheme.
-	if len(dsn) >= 10 && dsn[:10] == "postgres://" {
+	// golang-migrate pgx/v5 driver registers as "pgx5" and expects pgx5:// scheme.
+	switch {
+	case strings.HasPrefix(dsn, "postgres://"):
 		dsn = "pgx5://" + dsn[len("postgres://"):]
-	} else if len(dsn) >= 13 && dsn[:13] == "postgresql://" {
+	case strings.HasPrefix(dsn, "postgresql://"):
 		dsn = "pgx5://" + dsn[len("postgresql://"):]
 	}
 
