@@ -1,0 +1,95 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - "sed -i.bak 's/\"version\": \".*\"/\"version\": \"{{ .Version }}\"/' plugin.json && rm -f plugin.json.bak"
+
+builds:
+  # Main plugin binary: golang-migrate + goose + wfctl CLI
+  - id: workflow-plugin-migrations
+    main: ./cmd/workflow-plugin-migrations
+    binary: workflow-plugin-migrations
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X github.com/GoCodeAlone/workflow-plugin-migrations/internal.Version={{.Version}}
+
+  # Atlas driver binary: atlas only (separate to keep main binary lean)
+  - id: workflow-plugin-atlas-migrate
+    main: ./cmd/workflow-plugin-atlas-migrate
+    binary: workflow-plugin-atlas-migrate
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X github.com/GoCodeAlone/workflow-plugin-migrations/internal/atlasplugin.Version={{.Version}}
+
+  # Standalone migration binary for pre-deploy jobs
+  - id: workflow-migrate
+    main: ./cmd/workflow-migrate
+    binary: workflow-migrate
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: workflow-plugin-migrations
+    builds: [workflow-plugin-migrations]
+    formats: [tar.gz]
+    name_template: "workflow-plugin-migrations-{{ .Os }}-{{ .Arch }}"
+    files:
+      - plugin.json
+      - LICENSE
+
+  - id: workflow-plugin-atlas-migrate
+    builds: [workflow-plugin-atlas-migrate]
+    formats: [tar.gz]
+    name_template: "workflow-plugin-atlas-migrate-{{ .Os }}-{{ .Arch }}"
+    files:
+      - plugin.json
+      - LICENSE
+
+  - id: workflow-migrate
+    builds: [workflow-migrate]
+    formats: [tar.gz]
+    name_template: "workflow-migrate-{{ .Os }}-{{ .Arch }}"
+    files:
+      - LICENSE
+
+sboms:
+  - artifacts: archive
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

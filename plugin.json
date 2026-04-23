@@ -1,0 +1,43 @@
+{
+    "name": "workflow-plugin-migrations",
+    "version": "0.0.0",
+    "description": "Database migration plugin for the workflow engine: golang-migrate + goose drivers, pre-deploy runner, wfctl migrate CLI",
+    "author": "GoCodeAlone",
+    "license": "Apache-2.0",
+    "type": "external",
+    "tier": "community",
+    "private": false,
+    "minEngineVersion": "0.18.0",
+    "keywords": ["migrations", "database", "postgres", "golang-migrate", "goose"],
+    "homepage": "https://github.com/GoCodeAlone/workflow-plugin-migrations",
+    "repository": "https://github.com/GoCodeAlone/workflow-plugin-migrations",
+    "capabilities": {
+        "configProvider": false,
+        "moduleTypes": [
+            "database.migrations",
+            "database.migration_driver"
+        ],
+        "stepTypes": [
+            "step.migrate_up",
+            "step.migrate_down",
+            "step.migrate_status",
+            "step.migrate_to"
+        ],
+        "triggerTypes": [],
+        "migrationDrivers": ["golang-migrate", "goose"],
+        "cliCommands": [
+            {
+                "name": "migrate",
+                "description": "Run database migrations",
+                "subcommands": [
+                    {"name": "up", "description": "Apply all pending migrations"},
+                    {"name": "down", "description": "Roll back migrations"},
+                    {"name": "status", "description": "Show migration status"},
+                    {"name": "goto", "description": "Migrate to a specific version"}
+                ],
+                "flags_passthrough": true
+            }
+        ],
+        "buildHooks": []
+    }
+}
