@@ -34,7 +34,9 @@
                     {"name": "down", "description": "Roll back migrations"},
                     {"name": "status", "description": "Show migration status"},
                     {"name": "goto", "description": "Migrate to a specific version"},
-                    {"name": "lint", "description": "Static analysis for migration files"}
+                    {"name": "lint", "description": "Static analysis for migration files"},
+                    {"name": "test", "description": "Run full-cycle and checkpoint migration tests"},
+                    {"name": "tenant-ensure", "description": "Ensure a tenant schema exists in the database"}
                 ],
                 "flags_passthrough": true
             }
