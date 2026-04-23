@@ -37,9 +37,9 @@ func newDriverModule(name string, rawCfg map[string]any) (sdk.ModuleInstance, er
 	return &driverModule{name: name, cfg: cfg}, nil
 }
 
-func (m *driverModule) Init() error                    { return nil }
-func (m *driverModule) Start(_ context.Context) error  { return nil }
-func (m *driverModule) Stop(_ context.Context) error   { return nil }
+func (m *driverModule) Init() error                   { return nil }
+func (m *driverModule) Start(_ context.Context) error { return nil }
+func (m *driverModule) Stop(_ context.Context) error  { return nil }
 
 // InvokeMethod returns driver metadata.
 func (m *driverModule) InvokeMethod(method string, _ map[string]any) (map[string]any, error) {
