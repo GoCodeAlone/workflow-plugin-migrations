@@ -10,7 +10,7 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	migratefile "github.com/golang-migrate/migrate/v4/source/file"
 
 	"github.com/GoCodeAlone/workflow/interfaces"
 )
@@ -114,12 +114,17 @@ func (d *Driver) Status(_ context.Context, req interfaces.MigrationRequest) (int
 	}
 
 	current := ""
-	if !errors.Is(err, migrate.ErrNilVersion) {
+	atNil := errors.Is(err, migrate.ErrNilVersion)
+	if !atNil {
 		current = fmt.Sprintf("%d", version)
 	}
 
+	// Enumerate pending migrations (versions in source that exceed current).
+	pending, _ := listPendingVersions(req.Source.Dir, version, atNil)
+
 	return interfaces.MigrationStatus{
 		Current: current,
+		Pending: pending,
 		Dirty:   dirty,
 	}, nil
 }
@@ -179,4 +184,26 @@ func collectApplied(before, after uint) []string {
 		applied = append(applied, fmt.Sprintf("%d", v))
 	}
 	return applied
+}
+
+// listPendingVersions opens the file source and returns the version strings of
+// migrations that have not yet been applied (i.e. version > current).
+// When atNil is true the DB has no applied migrations, so every version is pending.
+func listPendingVersions(dir string, current uint, atNil bool) ([]string, error) {
+	src := &migratefile.File{}
+	s, err := src.Open("file://" + dir)
+	if err != nil {
+		return nil, fmt.Errorf("golang-migrate: open source for pending list: %w", err)
+	}
+	defer s.Close()
+
+	var pending []string
+	v, err := s.First()
+	for err == nil {
+		if atNil || v > current {
+			pending = append(pending, fmt.Sprintf("%d", v))
+		}
+		v, err = s.Next(v)
+	}
+	return pending, nil
 }
