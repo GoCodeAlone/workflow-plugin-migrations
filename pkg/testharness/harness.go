@@ -1,54 +1,122 @@
 // Package testharness provides a Postgres test harness for migration driver tests.
-// It auto-selects an appropriate backend:
+// Each call to New() creates an isolated PostgreSQL schema so tests don't
+// pollute each other's state.
+//
+// Backend selection:
 //  1. ProvidedDSN — if WORKFLOW_MIGRATE_TEST_DSN env var is set.
-//  2. EmbeddedPostgres — Fergus Strange's pure-Go embedded Postgres (default, no Docker required).
+//  2. EmbeddedPostgres — Fergus Strange's pure-Go embedded Postgres (default).
 package testharness
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
+	"math/rand"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Harness wraps a running Postgres instance.
+// Harness wraps a running Postgres instance with an isolated schema.
 type Harness struct {
-	dsn      string
+	// dsn is the connection string with search_path set to the isolated schema.
+	dsn string
+	// schema is the unique schema name created for this harness instance.
+	schema string
+	// adminConn is used to create and drop the schema.
+	adminConn *sql.DB
+	// embedded is non-nil when we started the embedded postgres.
 	embedded *embeddedpostgres.EmbeddedPostgres
 }
 
-// New creates and starts a new Postgres harness.
-// The caller must defer h.Close(t) to stop the server.
+// New creates and starts a new Postgres harness with an isolated schema.
+// The caller must defer h.Close(t) to clean up the schema and stop the server.
 func New() (*Harness, error) {
-	// 1. Provided DSN.
-	if dsn := os.Getenv("WORKFLOW_MIGRATE_TEST_DSN"); dsn != "" {
-		return &Harness{dsn: dsn}, nil
+	baseDSN := os.Getenv("WORKFLOW_MIGRATE_TEST_DSN")
+
+	var ep *embeddedpostgres.EmbeddedPostgres
+	if baseDSN == "" {
+		// Start embedded Postgres on a random port to avoid conflicts.
+		port := uint32(15432 + rand.Intn(1000))
+		ep = embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
+			Username("test").
+			Password("test").
+			Database("migrations_test").
+			Port(port),
+		)
+		if err := ep.Start(); err != nil {
+			return nil, fmt.Errorf("embedded-postgres start: %w", err)
+		}
+		baseDSN = fmt.Sprintf("postgres://test:test@localhost:%d/migrations_test?sslmode=disable", port)
 	}
 
-	// 2. Embedded Postgres.
-	ep := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Username("test").
-		Password("test").
-		Database("migrations_test").
-		Port(15432),
-	)
-	if err := ep.Start(); err != nil {
-		return nil, fmt.Errorf("embedded-postgres start: %w", err)
+	// Create a unique schema for this harness to isolate from other tests.
+	schema := uniqueSchema()
+	adminConn, err := sql.Open("pgx", baseDSN)
+	if err != nil {
+		if ep != nil {
+			_ = ep.Stop()
+		}
+		return nil, fmt.Errorf("testharness: open admin conn: %w", err)
 	}
-	dsn := "postgres://test:test@localhost:15432/migrations_test?sslmode=disable"
-	return &Harness{dsn: dsn, embedded: ep}, nil
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := adminConn.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA %q", schema)); err != nil {
+		_ = adminConn.Close()
+		if ep != nil {
+			_ = ep.Stop()
+		}
+		return nil, fmt.Errorf("testharness: create schema %q: %w", schema, err)
+	}
+
+	// Build a DSN that sets search_path so all tables land in our schema.
+	schemaDSN := withSearchPath(baseDSN, schema)
+
+	return &Harness{
+		dsn:       schemaDSN,
+		schema:    schema,
+		adminConn: adminConn,
+		embedded:  ep,
+	}, nil
 }
 
 // DSN returns the PostgreSQL connection string for this harness.
+// The DSN includes search_path=<schema> for isolation.
 func (h *Harness) DSN() string { return h.dsn }
 
-// Close stops the embedded Postgres server, if any.
+// Close drops the isolated schema and stops the embedded Postgres server if any.
 func (h *Harness) Close(t *testing.T) {
 	t.Helper()
+	if h.adminConn != nil && h.schema != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := h.adminConn.ExecContext(ctx, fmt.Sprintf("DROP SCHEMA %q CASCADE", h.schema)); err != nil {
+			t.Logf("testharness: drop schema %q: %v", h.schema, err)
+		}
+		_ = h.adminConn.Close()
+	}
 	if h.embedded != nil {
 		if err := h.embedded.Stop(); err != nil {
 			t.Logf("embedded-postgres stop: %v", err)
 		}
 	}
+}
+
+// uniqueSchema generates a unique schema name for this test run.
+func uniqueSchema() string {
+	return fmt.Sprintf("wfm_test_%d_%d", time.Now().UnixNano(), rand.Int63n(9999))
+}
+
+// withSearchPath appends search_path=<schema> to a postgres DSN.
+// It handles both DSNs with and without existing query parameters.
+func withSearchPath(dsn, schema string) string {
+	if strings.Contains(dsn, "?") {
+		return dsn + "&search_path=" + schema
+	}
+	return dsn + "?search_path=" + schema
 }
