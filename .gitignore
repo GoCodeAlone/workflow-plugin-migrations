@@ -1,0 +1,4 @@
+dist/
+*.bak
+*.test
+vendor/
