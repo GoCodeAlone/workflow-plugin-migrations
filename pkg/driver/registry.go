@@ -2,6 +2,7 @@ package driver
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -59,5 +60,6 @@ func (r *Registry) names() []string {
 	for n := range r.drivers {
 		names = append(names, n)
 	}
+	sort.Strings(names)
 	return names
 }

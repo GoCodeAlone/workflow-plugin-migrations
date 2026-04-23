@@ -75,12 +75,24 @@ func (d *Driver) Down(ctx context.Context, req interfaces.MigrationRequest) (int
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate down: %w", err)
 	}
 
-	after, _, _ := m.Version()
-	_ = before
-	_ = after
+	after, _, afterErr := m.Version()
+
+	// Build list of rolled-back version strings (highest to lowest).
+	// If we're back at nil version (ErrNilVersion), treat after as 0.
+	var rolledBack []string
+	if errors.Is(afterErr, migrate.ErrNilVersion) {
+		for v := uint(1); v <= before; v++ {
+			rolledBack = append(rolledBack, fmt.Sprintf("%d", v))
+		}
+	} else if after < before {
+		for v := after + 1; v <= before; v++ {
+			rolledBack = append(rolledBack, fmt.Sprintf("%d", v))
+		}
+	}
+	// If after >= before, nothing was rolled back — return empty slice.
 
 	return interfaces.MigrationResult{
-		Applied:    []string{fmt.Sprintf("rolled back %d migration(s)", steps)},
+		Applied:    rolledBack,
 		DurationMs: time.Since(start).Milliseconds(),
 	}, nil
 }

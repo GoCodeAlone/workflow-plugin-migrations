@@ -15,8 +15,8 @@ import (
 
 // migrationsModuleConfig is the configuration for the database.migrations module.
 type migrationsModuleConfig struct {
-	// DriverRef is the name of a database.migration_driver module, OR a driver
-	// name (golang-migrate, goose) for inline driver configuration.
+	// DriverRef is treated as a literal driver name (golang-migrate, goose).
+	// Module-reference lookup is not yet implemented.
 	DriverRef string `json:"driver_ref"`
 	// Driver is the driver name when not using a module ref.
 	Driver string `json:"driver"`
@@ -62,11 +62,9 @@ func newMigrationsModule(name string, rawCfg map[string]any) (sdk.ModuleInstance
 	if cfg.SourceDir == "" {
 		return nil, fmt.Errorf("database.migrations %q: source_dir is required", name)
 	}
-	if cfg.DSNEnv == "" && rawCfg["dsn"] == nil {
-		// Allow direct dsn for test usage
-		if v, ok := rawCfg["dsn"].(string); !ok || v == "" {
-			cfg.DSNEnv = "DATABASE_URL"
-		}
+	// Default DSN env to DATABASE_URL; runtime args["dsn"] can override at call time.
+	if cfg.DSNEnv == "" {
+		cfg.DSNEnv = "DATABASE_URL"
 	}
 	return &migrationsModule{name: name, cfg: cfg}, nil
 }
@@ -122,7 +120,8 @@ func (m *migrationsModule) InvokeMethod(method string, args map[string]any) (map
 		},
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	switch method {
 	case "up":
