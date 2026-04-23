@@ -85,27 +85,37 @@ func TestAtlasDriver_UpDownStatus(t *testing.T) {
 
 // makeAtlasDir creates a temporary Atlas migration directory with two versioned
 // SQL migrations and their down counterparts, plus a valid atlas.sum file.
+//
+// Down files are placed in a "down/" subdirectory so Atlas does not pick them
+// up as additional up migrations (Atlas scans all *.sql files in the top-level
+// directory, causing duplicate-version panics when .down.sql files share the
+// same version prefix as their corresponding up migration).
 func makeAtlasDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	downDir := dir + "/down"
+	if err := os.MkdirAll(downDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	up1 := []byte("CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);\n")
 	dn1 := []byte("DROP TABLE IF EXISTS users;\n")
 	up2 := []byte("CREATE TABLE posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL);\n")
 	dn2 := []byte("DROP TABLE IF EXISTS posts;\n")
 
-	write := func(name string, data []byte) {
+	write := func(path string, data []byte) {
 		t.Helper()
-		if err := os.WriteFile(dir+"/"+name, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("00001_create_users.sql", up1)
-	write("00001_create_users.down.sql", dn1)
-	write("00002_create_posts.sql", up2)
-	write("00002_create_posts.down.sql", dn2)
+	write(dir+"/00001_create_users.sql", up1)
+	write(dir+"/00002_create_posts.sql", up2)
+	write(downDir+"/00001_create_users.down.sql", dn1)
+	write(downDir+"/00002_create_posts.down.sql", dn2)
 
 	// Generate atlas.sum so the executor validates successfully.
+	// Only the top-level .sql files (up migrations) are included in the sum.
 	localDir, err := atlmigrate.NewLocalDir(dir)
 	if err != nil {
 		t.Fatalf("NewLocalDir: %v", err)

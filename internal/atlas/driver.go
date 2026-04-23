@@ -9,7 +9,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	atlmigrate "ariga.io/atlas/sql/migrate"
@@ -304,9 +305,16 @@ func openDir(path string) (*atlmigrate.LocalDir, error) {
 }
 
 // runDown executes the .down.sql file paired with a versioned Atlas migration.
-// Files are expected to follow the naming: <version>_<desc>.down.sql.
+// Down files must live in a "down/" subdirectory alongside the migration directory
+// to avoid Atlas treating them as up migrations (Atlas scans all *.sql files in
+// the top-level directory). Expected layout:
+//
+//	<dir>/00001_create_users.sql
+//	<dir>/down/00001_create_users.down.sql
+//
+// Falls back to <dir>/<version>.down.sql for legacy setups.
 func runDown(ctx context.Context, db *sql.DB, dir, version string) error {
-	// Enumerate .down.sql files matching the version prefix.
+	// Enumerate up-migration files to find the base name for the given version.
 	localDir, err := atlmigrate.NewLocalDir(dir)
 	if err != nil {
 		return err
@@ -317,25 +325,32 @@ func runDown(ctx context.Context, db *sql.DB, dir, version string) error {
 	}
 	for _, f := range files {
 		if f.Version() == version {
-			// Look for a paired .down.sql file.
 			downName := downFilename(f.Name())
 			if downName == "" {
 				return fmt.Errorf("atlas: no .down.sql file for version %s", version)
 			}
-			fh, ferr := localDir.Open(downName)
-			if ferr != nil {
-				return fmt.Errorf("atlas: open %s: %w", downName, ferr)
+			// Preferred location: <dir>/down/<downName>
+			preferredPath := filepath.Join(dir, "down", downName)
+			if buf, readErr := os.ReadFile(preferredPath); readErr == nil {
+				if len(buf) == 0 {
+					return fmt.Errorf("atlas: empty .down.sql for version %s", version)
+				}
+				_, err = db.ExecContext(ctx, string(buf))
+				return err
 			}
-			defer fh.Close()
-			buf, rerr := io.ReadAll(fh)
-			if rerr != nil {
-				return fmt.Errorf("atlas: read %s: %w", downName, rerr)
+			// Legacy fallback: <dir>/<downName> (same directory as up migrations).
+			// Note: storing .down.sql files alongside .sql files will cause Atlas
+			// to include them in its file list and may lead to duplicate-version
+			// errors. Use the "down/" subdirectory layout instead.
+			legacyPath := filepath.Join(dir, downName)
+			buf, readErr := os.ReadFile(legacyPath)
+			if readErr != nil {
+				return fmt.Errorf("atlas: open %s: %w", downName, readErr)
 			}
-			downSQL := string(buf)
-			if downSQL == "" {
+			if len(buf) == 0 {
 				return fmt.Errorf("atlas: empty .down.sql for version %s", version)
 			}
-			_, err = db.ExecContext(ctx, downSQL)
+			_, err = db.ExecContext(ctx, string(buf))
 			return err
 		}
 	}
