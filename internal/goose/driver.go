@@ -100,7 +100,7 @@ func (d *Driver) Down(ctx context.Context, req interfaces.MigrationRequest) (int
 }
 
 // Status returns the current migration state.
-func (d *Driver) Status(_ context.Context, req interfaces.MigrationRequest) (interfaces.MigrationStatus, error) {
+func (d *Driver) Status(ctx context.Context, req interfaces.MigrationRequest) (interfaces.MigrationStatus, error) {
 	if err := req.Validate(); err != nil {
 		return interfaces.MigrationStatus{}, err
 	}
@@ -115,7 +115,7 @@ func (d *Driver) Status(_ context.Context, req interfaces.MigrationRequest) (int
 		return interfaces.MigrationStatus{}, err
 	}
 
-	migrations, err := provider.Status(context.Background())
+	migrations, err := provider.Status(ctx)
 	if err != nil {
 		return interfaces.MigrationStatus{}, fmt.Errorf("goose status: %w", err)
 	}
