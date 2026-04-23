@@ -8,8 +8,8 @@ import (
 	atlmigrate "ariga.io/atlas/sql/migrate"
 
 	atlasdriver "github.com/GoCodeAlone/workflow-plugin-migrations/internal/atlas"
-	"github.com/GoCodeAlone/workflow/interfaces"
 	"github.com/GoCodeAlone/workflow-plugin-migrations/pkg/testharness"
+	"github.com/GoCodeAlone/workflow/interfaces"
 )
 
 func TestAtlasDriver_Name(t *testing.T) {

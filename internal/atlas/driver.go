@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	atlmigrate "ariga.io/atlas/sql/migrate"
@@ -326,9 +327,11 @@ func runDown(ctx context.Context, db *sql.DB, dir, version string) error {
 				return fmt.Errorf("atlas: open %s: %w", downName, ferr)
 			}
 			defer fh.Close()
-			buf := make([]byte, 1<<20) // 1 MB max
-			n, _ := fh.Read(buf)
-			downSQL := string(buf[:n])
+			buf, rerr := io.ReadAll(fh)
+			if rerr != nil {
+				return fmt.Errorf("atlas: read %s: %w", downName, rerr)
+			}
+			downSQL := string(buf)
 			if downSQL == "" {
 				return fmt.Errorf("atlas: empty .down.sql for version %s", version)
 			}

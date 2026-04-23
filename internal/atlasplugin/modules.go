@@ -120,9 +120,9 @@ type driverModule struct {
 	driver interfaces.MigrationDriver
 }
 
-func (m *driverModule) Init() error                           { return nil }
-func (m *driverModule) Start(_ context.Context) error         { return nil }
-func (m *driverModule) Stop(_ context.Context) error          { return nil }
+func (m *driverModule) Init() error                   { return nil }
+func (m *driverModule) Start(_ context.Context) error { return nil }
+func (m *driverModule) Stop(_ context.Context) error  { return nil }
 func (m *driverModule) InvokeMethod(method string, _ map[string]any) (map[string]any, error) {
 	if method == "driver_name" {
 		return map[string]any{"name": m.driver.Name()}, nil
@@ -141,9 +141,17 @@ func newDriverBackedModule(name string, rawCfg map[string]any, d interfaces.Migr
 	return &driverBackedModule{name: name, rawCfg: rawCfg, driver: d}
 }
 
-func (m *driverBackedModule) Init() error                           { return nil }
-func (m *driverBackedModule) Start(_ context.Context) error         { return nil }
-func (m *driverBackedModule) Stop(_ context.Context) error          { return nil }
-func (m *driverBackedModule) InvokeMethod(method string, args map[string]any) (map[string]any, error) {
-	return nil, fmt.Errorf("driverBackedModule %q: method %q not yet implemented in atlas plugin", m.name, method)
+func (m *driverBackedModule) Init() error                   { return nil }
+func (m *driverBackedModule) Start(_ context.Context) error { return nil }
+func (m *driverBackedModule) Stop(_ context.Context) error  { return nil }
+// InvokeMethod is intentionally unimplemented for golang-migrate and goose modules
+// created via the atlas binary. Use the main workflow-plugin-migrations binary
+// (which ships without Atlas HCL dependencies) for those drivers. This module
+// exists only so that CreateModule can return a non-nil instance for config
+// validation; actual execution routes through the appropriate binary.
+func (m *driverBackedModule) InvokeMethod(method string, _ map[string]any) (map[string]any, error) {
+	return nil, fmt.Errorf(
+		"database.migrations %q: driver %q methods must be invoked via workflow-plugin-migrations, not workflow-plugin-atlas-migrate",
+		m.name, m.driver.Name(),
+	)
 }
