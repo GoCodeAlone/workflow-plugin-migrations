@@ -109,7 +109,10 @@ func (s *Suite) testDownOne(t *testing.T, d interfaces.MigrationDriver) {
 		t.Fatalf("Up() error: %v", err)
 	}
 
-	stBefore, _ := d.Status(ctx, s.req())
+	stBefore, err := d.Status(ctx, s.req())
+	if err != nil {
+		t.Fatalf("Status() before Down error: %v", err)
+	}
 
 	req := s.req()
 	req.Options.Steps = 1

@@ -13,6 +13,9 @@ import (
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
 )
 
+// version is set at build time via -X main.version=<version>.
+var version string
+
 func main() {
 	sdk.ServePluginFull(internal.NewPlugin(), cli.NewCLIProvider(), nil)
 }

@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -40,19 +41,25 @@ func New() (*Harness, error) {
 
 	var ep *embeddedpostgres.EmbeddedPostgres
 	if baseDSN == "" {
-		// Start embedded Postgres on a random port to avoid conflicts.
-		port := uint32(15432 + rand.Intn(1000))
+		// Pick a free port atomically via net.Listen so parallel test processes
+		// never collide (math/rand port selection can produce the same value
+		// across processes even when auto-seeded).
+		port, err := freePort()
+		if err != nil {
+			return nil, fmt.Errorf("testharness: find free port: %w", err)
+		}
 		ep = embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
 			Username("test").
 			Password("test").
 			Database("migrations_test").
-			Port(port),
+			Port(uint32(port)),
 		)
 		if err := ep.Start(); err != nil {
 			return nil, fmt.Errorf("embedded-postgres start: %w", err)
 		}
 		baseDSN = fmt.Sprintf("postgres://test:test@localhost:%d/migrations_test?sslmode=disable", port)
 	}
+
 
 	// Create a unique schema for this harness to isolate from other tests.
 	schema := uniqueSchema()
@@ -105,6 +112,19 @@ func (h *Harness) Close(t *testing.T) {
 			t.Logf("embedded-postgres stop: %v", err)
 		}
 	}
+}
+
+// freePort asks the OS for an unused TCP port and returns it.
+// Using net.Listen avoids port collisions that can occur when multiple test
+// processes generate random port numbers concurrently.
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port, nil
 }
 
 // uniqueSchema generates a unique schema name for this test run.
