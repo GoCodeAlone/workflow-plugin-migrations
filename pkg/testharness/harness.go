@@ -60,7 +60,6 @@ func New() (*Harness, error) {
 		baseDSN = fmt.Sprintf("postgres://test:test@localhost:%d/migrations_test?sslmode=disable", port)
 	}
 
-
 	// Create a unique schema for this harness to isolate from other tests.
 	schema := uniqueSchema()
 	adminConn, err := sql.Open("pgx", baseDSN)
