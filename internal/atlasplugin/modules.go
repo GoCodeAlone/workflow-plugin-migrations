@@ -144,6 +144,7 @@ func newDriverBackedModule(name string, rawCfg map[string]any, d interfaces.Migr
 func (m *driverBackedModule) Init() error                   { return nil }
 func (m *driverBackedModule) Start(_ context.Context) error { return nil }
 func (m *driverBackedModule) Stop(_ context.Context) error  { return nil }
+
 // InvokeMethod is intentionally unimplemented for golang-migrate and goose modules
 // created via the atlas binary. Use the main workflow-plugin-migrations binary
 // (which ships without Atlas HCL dependencies) for those drivers. This module
