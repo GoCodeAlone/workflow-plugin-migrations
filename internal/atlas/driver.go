@@ -42,7 +42,7 @@ func (d *Driver) Up(ctx context.Context, req interfaces.MigrationRequest) (inter
 	defer cleanup()
 	_ = db
 
-	ex, err := atlmigrate.NewExecutor(drv, dir, rrw)
+	ex, err := atlmigrate.NewExecutor(drv, dir, rrw, atlmigrate.WithAllowDirty(true))
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("atlas: executor: %w", err)
 	}
@@ -147,7 +147,7 @@ func (d *Driver) Status(ctx context.Context, req interfaces.MigrationRequest) (i
 	_ = db
 	_ = drv
 
-	ex, err := atlmigrate.NewExecutor(drv, dir, rrw)
+	ex, err := atlmigrate.NewExecutor(drv, dir, rrw, atlmigrate.WithAllowDirty(true))
 	if err != nil {
 		return interfaces.MigrationStatus{}, fmt.Errorf("atlas status: executor: %w", err)
 	}
@@ -205,7 +205,7 @@ func (d *Driver) Goto(ctx context.Context, req interfaces.MigrationRequest, targ
 	// Determine direction.
 	if target > current {
 		// Migrate up to target.
-		ex, err := atlmigrate.NewExecutor(drv, dir, rrw)
+		ex, err := atlmigrate.NewExecutor(drv, dir, rrw, atlmigrate.WithAllowDirty(true))
 		if err != nil {
 			return interfaces.MigrationResult{}, fmt.Errorf("atlas goto: executor: %w", err)
 		}
