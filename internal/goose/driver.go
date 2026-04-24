@@ -34,7 +34,7 @@ func (d *Driver) Up(ctx context.Context, req interfaces.MigrationRequest) (inter
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	provider, err := newProvider(db, req)
 	if err != nil {
@@ -74,7 +74,7 @@ func (d *Driver) Down(ctx context.Context, req interfaces.MigrationRequest) (int
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	provider, err := newProvider(db, req)
 	if err != nil {
@@ -108,7 +108,7 @@ func (d *Driver) Status(ctx context.Context, req interfaces.MigrationRequest) (i
 	if err != nil {
 		return interfaces.MigrationStatus{}, err
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	provider, err := newProvider(db, req)
 	if err != nil {
@@ -153,7 +153,7 @@ func (d *Driver) Goto(ctx context.Context, req interfaces.MigrationRequest, targ
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	provider, err := newProvider(db, req)
 	if err != nil {

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-04-24
+
+### Fixed
+
+- **P0: golang-migrate driver panics on timestamp-based migration versions** — `collectApplied(before, after uint)` pre-allocated `make([]string, 0, after-before)`, assuming sequential version numbers. BMW uses timestamp-based versions (e.g. `20240101000001`), so `after-before = 2×10¹³` → `makeslice: cap out of range` panic. **`v0.3.0` is defective and should not be used with timestamp-based migrations.** The fix replaces the integer-range loops in `Up()` and `Down()` with file-system source walking (the same pattern already used by `listPendingVersions`). New shared helper: `versionsInRange(dir, lo, hi, loNil)`.
+
+### Added
+
+- **`migrations-ci.yml` GHA workflow** — runs `workflow-migrate up` + `down` against ephemeral Postgres:16 on every PR touching migration driver code, using timestamp-based fixture migrations. This is the prevention mechanism that would have caught v0.3.0's panic before release.
+- **`.golangci.yml`** — adds golangci-lint v2 config (previously absent) with errcheck exclusions for idiomatic `defer .Close()` patterns.
+
 ## [0.3.0] - 2026-04-24
 
 ### Added

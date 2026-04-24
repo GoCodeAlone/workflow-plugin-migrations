@@ -64,7 +64,7 @@ func (r *sqlRevisionRW) ReadRevisions(ctx context.Context) ([]*atlmigrate.Revisi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	return scanRevisions(rows)
 }
 

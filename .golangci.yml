@@ -1,0 +1,26 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+
+issues:
+  exclusions:
+    rules:
+      # defer Close() calls — these are cleanup paths where errors are
+      # unactionable and the pattern is idiomatic Go (pre-existing).
+      - linters: [errcheck]
+        text: "Error return value of.*\\.Close"
+      # fmt.Fprintln to stdout in CLI test helper (pre-existing).
+      - linters: [errcheck]
+        text: "Error return value of `fmt\\.Fprintln`"
+      # goreleaser-injected version vars set via -ldflags at build time.
+      - linters: [unused]
+        text: "var version is unused"

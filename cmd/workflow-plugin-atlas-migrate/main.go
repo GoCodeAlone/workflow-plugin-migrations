@@ -10,7 +10,7 @@ import (
 )
 
 // version is set at build time via -X main.version=<version>.
-var version string
+var version string //nolint:unused
 
 func main() {
 	sdk.Serve(atlasplugin.NewPlugin())
