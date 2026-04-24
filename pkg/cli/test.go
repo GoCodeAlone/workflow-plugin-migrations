@@ -35,7 +35,7 @@ integration test setup (the calling process then uses that DB).`,
 				if err := runner.Setup(ctx); err != nil {
 					return fmt.Errorf("migrate test --keep-alive: %w", err)
 				}
-				fmt.Fprintln(os.Stdout, req.DSN)
+				fmt.Fprintln(os.Stdout, req.DSN) //nolint:errcheck
 				return nil
 			}
 

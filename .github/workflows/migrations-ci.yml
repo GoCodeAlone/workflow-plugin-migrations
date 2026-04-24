@@ -1,0 +1,188 @@
+name: Migrations CI
+
+# Runs workflow-migrate against an ephemeral Postgres on every PR that touches
+# migration driver code. This is the regression gate that catches panics like
+# the v0.3.0 collectApplied() overflow before merge.
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'internal/golangmigrate/**'
+      - 'internal/goose/**'
+      - 'internal/atlas/**'
+      - 'cmd/workflow-migrate/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/migrations-ci.yml'
+
+jobs:
+  ephemeral-migrate:
+    name: workflow-migrate up/down (golang-migrate, timestamp versions)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build workflow-migrate
+        run: |
+          CGO_ENABLED=0 go build -o /tmp/workflow-migrate ./cmd/workflow-migrate
+
+      - name: Prepare fixture migrations (timestamp-based — the v0.3.0 regression scenario)
+        run: |
+          mkdir -p /tmp/fixture-migrations
+
+          cat > /tmp/fixture-migrations/20240101000001_init.up.sql <<'SQL'
+          CREATE TABLE users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL);
+          SQL
+          cat > /tmp/fixture-migrations/20240101000001_init.down.sql <<'SQL'
+          DROP TABLE IF EXISTS users;
+          SQL
+
+          cat > /tmp/fixture-migrations/20240201000001_posts.up.sql <<'SQL'
+          CREATE TABLE posts (id SERIAL PRIMARY KEY, user_id INT);
+          SQL
+          cat > /tmp/fixture-migrations/20240201000001_posts.down.sql <<'SQL'
+          DROP TABLE IF EXISTS posts;
+          SQL
+
+          cat > /tmp/fixture-migrations/20240301000001_comments.up.sql <<'SQL'
+          CREATE TABLE comments (id SERIAL PRIMARY KEY, post_id INT, body TEXT);
+          SQL
+          cat > /tmp/fixture-migrations/20240301000001_comments.down.sql <<'SQL'
+          DROP TABLE IF EXISTS comments;
+          SQL
+
+      - name: Run workflow-migrate up — timestamp-based versions (the v0.3.0 panic scenario)
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci_test?sslmode=disable
+        run: |
+          /tmp/workflow-migrate up --source-dir /tmp/fixture-migrations
+
+      - name: Verify tables created
+        env:
+          PGPASSWORD: ci
+        run: |
+          PSQL_OUTPUT=$(psql -h localhost -U ci -d ci_test -tAc '\dt')
+          echo "$PSQL_OUTPUT"
+          echo "$PSQL_OUTPUT" | grep -q 'users'    || { echo "FAIL: users table missing after up"; exit 1; }
+          echo "$PSQL_OUTPUT" | grep -q 'posts'    || { echo "FAIL: posts table missing after up"; exit 1; }
+          echo "$PSQL_OUTPUT" | grep -q 'comments' || { echo "FAIL: comments table missing after up"; exit 1; }
+          echo "All 3 tables present after up ✓"
+
+      - name: Run workflow-migrate down — rollback smoke test
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci_test?sslmode=disable
+          PGPASSWORD: ci
+        run: |
+          /tmp/workflow-migrate down --source-dir /tmp/fixture-migrations
+          # One migration rolled back — comments should be gone.
+          REMAINING=$(psql -h localhost -U ci -d ci_test -tAc \
+            "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename != 'schema_migrations'")
+          REMAINING=$(echo "$REMAINING" | tr -d '[:space:]')
+          test "$REMAINING" = "2" || { echo "FAIL: expected 2 tables after down(1), got $REMAINING"; exit 1; }
+          echo "Correct table count ($REMAINING) after down(1) ✓"
+
+      - name: Run workflow-migrate status
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci_test?sslmode=disable
+        run: |
+          /tmp/workflow-migrate status --source-dir /tmp/fixture-migrations
+
+  ephemeral-migrate-goose:
+    name: workflow-migrate up/down (goose driver, sequential versions)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci_goose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build workflow-migrate
+        run: |
+          CGO_ENABLED=0 go build -o /tmp/workflow-migrate ./cmd/workflow-migrate
+
+      - name: Prepare goose fixture migrations
+        run: |
+          mkdir -p /tmp/goose-migrations
+
+          cat > /tmp/goose-migrations/00001_users.sql <<'SQL'
+          -- +goose Up
+          CREATE TABLE users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL);
+          -- +goose Down
+          DROP TABLE IF EXISTS users;
+          SQL
+
+          cat > /tmp/goose-migrations/00002_posts.sql <<'SQL'
+          -- +goose Up
+          CREATE TABLE posts (id SERIAL PRIMARY KEY, user_id INT);
+          -- +goose Down
+          DROP TABLE IF EXISTS posts;
+          SQL
+
+      - name: Run workflow-migrate up (goose driver)
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci_goose?sslmode=disable
+        run: |
+          /tmp/workflow-migrate up --driver goose --source-dir /tmp/goose-migrations
+
+      - name: Verify goose tables created
+        env:
+          PGPASSWORD: ci
+        run: |
+          PSQL_OUTPUT=$(psql -h localhost -U ci -d ci_goose -tAc '\dt')
+          echo "$PSQL_OUTPUT"
+          echo "$PSQL_OUTPUT" | grep -q 'users' || { echo "FAIL: users missing"; exit 1; }
+          echo "$PSQL_OUTPUT" | grep -q 'posts' || { echo "FAIL: posts missing"; exit 1; }
+          echo "Goose: both tables present after up ✓"
+
+      - name: Run workflow-migrate down (goose driver)
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci_goose?sslmode=disable
+          PGPASSWORD: ci
+        run: |
+          /tmp/workflow-migrate down --driver goose --source-dir /tmp/goose-migrations
+          REMAINING=$(psql -h localhost -U ci -d ci_goose -tAc \
+            "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename != 'goose_db_version'")
+          REMAINING=$(echo "$REMAINING" | tr -d '[:space:]')
+          test "$REMAINING" = "1" || { echo "FAIL: expected 1 table after goose down(1), got $REMAINING"; exit 1; }
+          echo "Goose: correct table count ($REMAINING) after down(1) ✓"

@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -34,17 +36,33 @@ func (d *Driver) Up(ctx context.Context, req interfaces.MigrationRequest) (inter
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
 	}
-	defer m.Close()
+	defer m.Close() //nolint:errcheck
 
-	// Capture the current version before applying.
-	before, _, _ := m.Version()
+	// Capture the version before applying; fail fast if the DB is unavailable.
+	before, _, beforeErr := m.Version()
+	if beforeErr != nil && !errors.Is(beforeErr, migrate.ErrNilVersion) {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: version before up: %w", beforeErr)
+	}
+	atNilBefore := errors.Is(beforeErr, migrate.ErrNilVersion)
 
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate up: %w", err)
 	}
 
-	after, _, _ := m.Version()
-	applied := collectApplied(before, after)
+	after, _, afterErr := m.Version()
+	if afterErr != nil && !errors.Is(afterErr, migrate.ErrNilVersion) {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: version after up: %w", afterErr)
+	}
+
+	// Walk the source directory to enumerate applied versions; this is safe
+	// for timestamp-based version numbers where after-before can be 10^13.
+	applied, err := versionsInRange(req.Source.Dir, before, after, atNilBefore)
+	if err != nil {
+		// Migration succeeded but we can't enumerate applied versions — log and
+		// return partial info rather than hiding the applied state entirely.
+		log.Printf("warn: golang-migrate: applied version enumeration failed: %v", err)
+		applied = nil
+	}
 
 	return interfaces.MigrationResult{
 		Applied:    applied,
@@ -62,31 +80,41 @@ func (d *Driver) Down(ctx context.Context, req interfaces.MigrationRequest) (int
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
 	}
-	defer m.Close()
+	defer m.Close() //nolint:errcheck
 
 	steps := req.Options.Steps
 	if steps <= 0 {
 		steps = 1
 	}
 
-	before, _, _ := m.Version()
+	before, _, beforeErr := m.Version()
+	if beforeErr != nil && !errors.Is(beforeErr, migrate.ErrNilVersion) {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: version before down: %w", beforeErr)
+	}
 
 	if err := m.Steps(-steps); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate down: %w", err)
 	}
 
 	after, _, afterErr := m.Version()
+	if afterErr != nil && !errors.Is(afterErr, migrate.ErrNilVersion) {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: version after down: %w", afterErr)
+	}
 
 	// Build list of rolled-back version strings (highest to lowest).
-	// If we're back at nil version (ErrNilVersion), treat after as 0.
+	// Walk the source directory instead of integer-range loops — safe for
+	// timestamp-based version numbers where before-after can be 10^13.
 	var rolledBack []string
-	if errors.Is(afterErr, migrate.ErrNilVersion) {
-		for v := uint(1); v <= before; v++ {
-			rolledBack = append(rolledBack, fmt.Sprintf("%d", v))
+	afterNil := errors.Is(afterErr, migrate.ErrNilVersion)
+	if afterNil || after < before {
+		// versionsInRange returns versions in (after, before] ascending order;
+		// we reverse to produce highest-first (the order rolled back).
+		ascending, err := versionsInRange(req.Source.Dir, after, before, afterNil)
+		if err != nil {
+			log.Printf("warn: golang-migrate: rolled-back version enumeration failed: %v", err)
 		}
-	} else if after < before {
-		for v := after + 1; v <= before; v++ {
-			rolledBack = append(rolledBack, fmt.Sprintf("%d", v))
+		for i := len(ascending) - 1; i >= 0; i-- {
+			rolledBack = append(rolledBack, ascending[i])
 		}
 	}
 	// If after >= before, nothing was rolled back — return empty slice.
@@ -106,7 +134,7 @@ func (d *Driver) Status(_ context.Context, req interfaces.MigrationRequest) (int
 	if err != nil {
 		return interfaces.MigrationStatus{}, fmt.Errorf("golang-migrate: %w", err)
 	}
-	defer m.Close()
+	defer m.Close() //nolint:errcheck
 
 	version, dirty, err := m.Version()
 	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
@@ -139,7 +167,7 @@ func (d *Driver) Goto(_ context.Context, req interfaces.MigrationRequest, target
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
 	}
-	defer m.Close()
+	defer m.Close() //nolint:errcheck
 
 	var version uint
 	if _, err := fmt.Sscanf(target, "%d", &version); err != nil {
@@ -173,17 +201,37 @@ func newMigrate(req interfaces.MigrationRequest) (*migrate.Migrate, error) {
 	return migrate.New(sourceURL, dsn)
 }
 
-// collectApplied returns a list of version strings between before (exclusive)
-// and after (inclusive). If the versions are equal, returns empty.
-func collectApplied(before, after uint) []string {
-	if after <= before {
-		return nil
+// versionsInRange opens the file source and returns version strings v where
+// lo < v <= hi (exclusive lo, inclusive hi), in ascending order.
+// When loNil is true all versions v <= hi qualify (DB had no prior state).
+// This replaces the deleted collectApplied() which assumed sequential version
+// numbers and would panic on timestamp-based versions (e.g. 20240101000001).
+//
+// End-of-stream is signalled by os.ErrNotExist per the golang-migrate source.Driver
+// contract; any other error from Next() is returned to the caller.
+func versionsInRange(dir string, lo, hi uint, loNil bool) ([]string, error) {
+	src := &migratefile.File{}
+	s, err := src.Open("file://" + dir)
+	if err != nil {
+		return nil, fmt.Errorf("golang-migrate: open source for version range: %w", err)
 	}
-	applied := make([]string, 0, after-before)
-	for v := before + 1; v <= after; v++ {
-		applied = append(applied, fmt.Sprintf("%d", v))
+	defer s.Close() //nolint:errcheck
+
+	var result []string
+	v, err := s.First()
+	for {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				break // normal end of stream
+			}
+			return result, fmt.Errorf("golang-migrate: iterate source: %w", err)
+		}
+		if (loNil || v > lo) && v <= hi {
+			result = append(result, fmt.Sprintf("%d", v))
+		}
+		v, err = s.Next(v)
 	}
-	return applied
+	return result, nil
 }
 
 // listPendingVersions opens the file source and returns the version strings of
@@ -195,11 +243,17 @@ func listPendingVersions(dir string, current uint, atNil bool) ([]string, error)
 	if err != nil {
 		return nil, fmt.Errorf("golang-migrate: open source for pending list: %w", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck
 
 	var pending []string
 	v, err := s.First()
-	for err == nil {
+	for {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				break // normal end of stream
+			}
+			return pending, fmt.Errorf("golang-migrate: iterate source for pending: %w", err)
+		}
 		if atNil || v > current {
 			pending = append(pending, fmt.Sprintf("%d", v))
 		}

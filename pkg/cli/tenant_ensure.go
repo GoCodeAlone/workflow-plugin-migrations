@@ -36,7 +36,7 @@ has its own schema.`,
 			if err != nil {
 				return fmt.Errorf("tenant-ensure: open db: %w", err)
 			}
-			defer db.Close()
+			defer db.Close() //nolint:errcheck
 
 			if _, err = db.ExecContext(context.Background(),
 				fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %q`, schema)); err != nil {
