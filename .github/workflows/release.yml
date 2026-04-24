@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  packages: write
   id-token: write  # for OIDC/cosign keyless signing (future)
 
 jobs:
@@ -75,6 +74,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
-            org.opencontainers.image.source=https://github.com/GoCodeAlone/workflow-plugin-migrations
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ github.ref_name }}
             org.opencontainers.image.revision=${{ github.sha }}
