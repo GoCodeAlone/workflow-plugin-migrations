@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Build stage
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+# Build stage — Go version pinned to match go.mod exactly; bump here if go.mod is updated
+FROM --platform=$BUILDPLATFORM golang:1.26.0-alpine AS builder
 ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
