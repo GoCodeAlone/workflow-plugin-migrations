@@ -4,6 +4,9 @@ name: Migrations CI
 # migration driver code. This is the regression gate that catches panics like
 # the v0.3.0 collectApplied() overflow before merge.
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
