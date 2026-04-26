@@ -48,6 +48,7 @@ func NewRoot() *cobra.Command {
 		newStatusCmd(),
 		newGotoCmd(),
 		newForceCmd(),
+		newRepairDirtyCmd(),
 		newLintCmd(),
 		newTestCmd(),
 		newTenantEnsureCmd(),
@@ -203,6 +204,10 @@ type forceDriver interface {
 	Force(ctx context.Context, req interfaces.MigrationRequest, target string, opts golangmigrate.ForceOptions) (interfaces.MigrationResult, error)
 }
 
+type repairDirtyDriver interface {
+	RepairDirty(ctx context.Context, req interfaces.MigrationRequest, opts golangmigrate.RepairDirtyOptions) (interfaces.MigrationResult, error)
+}
+
 func newForceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "force <version>",
@@ -240,6 +245,58 @@ func newForceCmd() *cobra.Command {
 	sharedFlags(cmd)
 	cmd.Flags().String("confirm-force", "", "Typed confirmation required: FORCE_MIGRATION_METADATA")
 	cmd.Flags().Bool("allow-clean", false, "Allow force-setting a database that is not marked dirty")
+	return cmd
+}
+
+func newRepairDirtyCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "repair-dirty",
+		Short: "Repair a known dirty golang-migrate metadata version",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			confirmation, _ := cmd.Flags().GetString("confirm-force")
+			if confirmation != "FORCE_MIGRATION_METADATA" {
+				return fmt.Errorf("repair-dirty mutates migration metadata without applying SQL; pass --confirm-force FORCE_MIGRATION_METADATA to continue")
+			}
+			expected, _ := cmd.Flags().GetString("expected-dirty-version")
+			forceVersion, _ := cmd.Flags().GetString("force-version")
+			thenUp, _ := cmd.Flags().GetBool("then-up")
+
+			d, req, err := buildDriverAndRequest(cmd)
+			if err != nil {
+				return err
+			}
+			repairer, ok := d.(repairDirtyDriver)
+			if !ok {
+				return fmt.Errorf("driver %q does not support repair-dirty", d.Name())
+			}
+
+			result, err := repairer.RepairDirty(context.Background(), req, golangmigrate.RepairDirtyOptions{
+				ExpectedDirtyVersion: expected,
+				ForceVersion:         forceVersion,
+				ThenUp:               thenUp,
+			})
+			if err != nil {
+				return fmt.Errorf("migrate repair-dirty: %w", err)
+			}
+			if thenUp {
+				if len(result.Applied) == 0 {
+					fmt.Printf("Repaired dirty metadata at version %s to %s; no pending migrations. Duration: %dms\n", expected, forceVersion, result.DurationMs)
+					return nil
+				}
+				fmt.Printf("Repaired dirty metadata at version %s to %s; applied %d migration(s): %v. Duration: %dms\n", expected, forceVersion, len(result.Applied), result.Applied, result.DurationMs)
+				return nil
+			}
+			fmt.Printf("Repaired dirty metadata at version %s to %s; no migrations applied. Duration: %dms\n", expected, forceVersion, result.DurationMs)
+			return nil
+		},
+	}
+	sharedFlags(cmd)
+	cmd.Flags().String("expected-dirty-version", "", "Required dirty version currently recorded in migration metadata")
+	cmd.Flags().String("force-version", "", "Version to force-set after the dirty version guard passes")
+	cmd.Flags().String("confirm-force", "", "Typed confirmation required: FORCE_MIGRATION_METADATA")
+	cmd.Flags().Bool("then-up", false, "Run pending migrations after successful metadata repair")
+	_ = cmd.MarkFlagRequired("expected-dirty-version")
+	_ = cmd.MarkFlagRequired("force-version")
 	return cmd
 }
 
