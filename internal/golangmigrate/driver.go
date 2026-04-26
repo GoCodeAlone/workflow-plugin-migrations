@@ -259,7 +259,7 @@ func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationReques
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
-	if forceVersion > int(expected) {
+	if forceVersion > 0 && uint(forceVersion) > expected {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: force version %q must not be greater than expected dirty version %q", opts.ForceVersion, opts.ExpectedDirtyVersion)
 	}
 
