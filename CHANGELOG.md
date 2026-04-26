@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `workflow-migrate force <version>` for force-setting the recorded golang-migrate version after dirty or manual repair workflows.
-- `workflow-migrate repair-dirty` for guarded dirty migration metadata repair. It requires an exact dirty-version match, an explicit force target, and typed confirmation before metadata is changed, with optional `--then-up` to continue applying pending migrations after repair.
+- `workflow-migrate repair-dirty` for guarded dirty migration metadata repair. It requires an exact dirty-version match, an explicit force target, and typed confirmation before metadata is changed, with optional `--then-up` to continue applying pending migrations after repair. `--up-if-clean` makes the command idempotent in deploy configs by running normal `up` when the database is already clean, and implies `--then-up`.
 
 ## [0.3.1] - 2026-04-24
 

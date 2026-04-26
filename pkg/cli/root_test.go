@@ -27,6 +27,11 @@ func TestRootIncludesRepairDirtyCommand(t *testing.T) {
 	if cmd == nil || cmd.Name() != "repair-dirty" {
 		t.Fatalf("Find(repair-dirty) = %v; want repair-dirty command", cmd)
 	}
+	if flag := cmd.Flags().Lookup("up-if-clean"); flag == nil {
+		t.Fatal("repair-dirty --up-if-clean flag is missing")
+	} else if !strings.Contains(flag.Usage, "implies --then-up") {
+		t.Fatalf("--up-if-clean usage = %q; want then-up implication documented", flag.Usage)
+	}
 }
 
 func TestForceCommandRequiresTypedConfirmation(t *testing.T) {
@@ -116,6 +121,7 @@ func TestRepairDirtyCommandRejectsUnsupportedDrivers(t *testing.T) {
 		"--driver", "goose",
 		"--expected-dirty-version", "2",
 		"--force-version", "1",
+		"--up-if-clean",
 		"--source-dir", t.TempDir(),
 		"--dsn", "postgres://user:pass@example.invalid/db",
 		"--confirm-force", "FORCE_MIGRATION_METADATA",

@@ -197,6 +197,7 @@ type RepairDirtyOptions struct {
 	ExpectedDirtyVersion string
 	ForceVersion         string
 	ThenUp               bool
+	UpIfClean            bool
 }
 
 // Force sets the recorded migration version without applying migration files.
@@ -244,7 +245,8 @@ func (d *Driver) Force(_ context.Context, req interfaces.MigrationRequest, targe
 	}, nil
 }
 
-// RepairDirty verifies the database is dirty at the exact expected version before forcing metadata.
+// RepairDirty verifies a dirty database is at the exact expected version before
+// forcing metadata. With UpIfClean, a clean database runs normal up instead.
 func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationRequest, opts RepairDirtyOptions) (interfaces.MigrationResult, error) {
 	if err := req.Validate(); err != nil {
 		return interfaces.MigrationResult{}, err
@@ -292,6 +294,14 @@ func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationReques
 	}
 	if !dirty {
 		_, _ = m.Close()
+		if opts.UpIfClean {
+			result, err := d.Up(ctx, req)
+			if err != nil {
+				return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty up-if-clean: %w", err)
+			}
+			result.DurationMs = time.Since(start).Milliseconds()
+			return result, nil
+		}
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: database is clean; refusing metadata repair")
 	}
 	if current != expected {
@@ -305,7 +315,7 @@ func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationReques
 	}
 	_, _ = m.Close()
 
-	if opts.ThenUp {
+	if opts.ThenUp || opts.UpIfClean {
 		result, err := d.Up(ctx, req)
 		if err != nil {
 			st, statusErr := d.Status(ctx, req)
