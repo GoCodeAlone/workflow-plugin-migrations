@@ -8,6 +8,7 @@
 //	workflow-migrate down [flags]
 //	workflow-migrate status [flags]
 //	workflow-migrate goto <version> [flags]
+//	workflow-migrate force <version> [flags]
 package main
 
 import (

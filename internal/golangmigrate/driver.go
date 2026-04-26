@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -182,6 +183,89 @@ func (d *Driver) Goto(_ context.Context, req interfaces.MigrationRequest, target
 		Applied:    []string{target},
 		DurationMs: time.Since(start).Milliseconds(),
 	}, nil
+}
+
+// ForceOptions controls safety checks for metadata-only force repair.
+type ForceOptions struct {
+	// AllowClean permits force-setting a database that is not currently dirty.
+	// Leave false for normal repair flows so force is limited to dirty states.
+	AllowClean bool
+}
+
+// Force sets the recorded migration version without applying migration files.
+func (d *Driver) Force(_ context.Context, req interfaces.MigrationRequest, target string, opts ForceOptions) (interfaces.MigrationResult, error) {
+	if err := req.Validate(); err != nil {
+		return interfaces.MigrationResult{}, err
+	}
+	start := time.Now()
+
+	version, err := parseForceTarget(target)
+	if err != nil {
+		return interfaces.MigrationResult{}, err
+	}
+	if version > 0 {
+		exists, err := versionExists(req.Source.Dir, uint(version))
+		if err != nil {
+			return interfaces.MigrationResult{}, err
+		}
+		if !exists {
+			return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate force: target version %q does not exist in migration source", target)
+		}
+	}
+
+	m, err := newMigrate(req)
+	if err != nil {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
+	}
+	defer m.Close() //nolint:errcheck
+
+	_, dirty, err := m.Version()
+	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate force: version before force: %w", err)
+	}
+	if !dirty && !opts.AllowClean {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate force: database is clean; refusing metadata-only force without allow-clean")
+	}
+
+	if err := m.Force(version); err != nil {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate force: %w", err)
+	}
+
+	return interfaces.MigrationResult{
+		Applied:    nil,
+		DurationMs: time.Since(start).Milliseconds(),
+	}, nil
+}
+
+func parseForceTarget(target string) (int, error) {
+	version, err := strconv.Atoi(target)
+	if err != nil || version == 0 || version < -1 {
+		return 0, fmt.Errorf("golang-migrate force: invalid target version %q: must be -1 or a positive integer", target)
+	}
+	return version, nil
+}
+
+func versionExists(dir string, target uint) (bool, error) {
+	src := &migratefile.File{}
+	s, err := src.Open("file://" + dir)
+	if err != nil {
+		return false, fmt.Errorf("golang-migrate: open source for version lookup: %w", err)
+	}
+	defer s.Close() //nolint:errcheck
+
+	v, err := s.First()
+	for {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, fmt.Errorf("golang-migrate: read source version: %w", err)
+		}
+		if v == target {
+			return true, nil
+		}
+		v, err = s.Next(v)
+	}
 }
 
 // newMigrate creates a migrate.Migrate from a MigrationRequest.

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -46,6 +47,7 @@ func NewRoot() *cobra.Command {
 		newDownCmd(),
 		newStatusCmd(),
 		newGotoCmd(),
+		newForceCmd(),
 		newLintCmd(),
 		newTestCmd(),
 		newTenantEnsureCmd(),
@@ -195,4 +197,100 @@ func newGotoCmd() *cobra.Command {
 	}
 	sharedFlags(cmd)
 	return cmd
+}
+
+type forceDriver interface {
+	Force(ctx context.Context, req interfaces.MigrationRequest, target string, opts golangmigrate.ForceOptions) (interfaces.MigrationResult, error)
+}
+
+func newForceCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:                "force <version>",
+		Short:              "Force-set the recorded migration version",
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target, flagArgs, err := splitForceArgs(args)
+			if err != nil {
+				return err
+			}
+			if err := cmd.Flags().Parse(flagArgs); err != nil {
+				return err
+			}
+			confirmation, _ := cmd.Flags().GetString("confirm-force")
+			if confirmation != "FORCE_MIGRATION_METADATA" {
+				return fmt.Errorf("force mutates migration metadata without applying SQL; pass --confirm-force FORCE_MIGRATION_METADATA to continue")
+			}
+			d, req, err := buildDriverAndRequest(cmd)
+			if err != nil {
+				return err
+			}
+			f, ok := d.(forceDriver)
+			if !ok {
+				return fmt.Errorf("driver %q does not support force", d.Name())
+			}
+			allowClean, _ := cmd.Flags().GetBool("allow-clean")
+			result, err := f.Force(context.Background(), req, target, golangmigrate.ForceOptions{AllowClean: allowClean})
+			if err != nil {
+				return fmt.Errorf("migrate force %s: %w", target, err)
+			}
+			fmt.Printf("Recorded migration version set to %s; no migrations applied. Duration: %dms\n", target, result.DurationMs)
+			return nil
+		},
+	}
+	sharedFlags(cmd)
+	cmd.Flags().String("confirm-force", "", "Typed confirmation required: FORCE_MIGRATION_METADATA")
+	cmd.Flags().Bool("allow-clean", false, "Allow force-setting a database that is not marked dirty")
+	return cmd
+}
+
+func splitForceArgs(args []string) (string, []string, error) {
+	var target string
+	flagArgs := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 >= len(args) {
+				return "", nil, fmt.Errorf("force requires exactly one version")
+			}
+			if target != "" {
+				return "", nil, fmt.Errorf("force requires exactly one version")
+			}
+			target = args[i+1]
+			if i+2 < len(args) {
+				flagArgs = append(flagArgs, args[i+2:]...)
+			}
+			break
+		}
+		if arg == "-1" || !strings.HasPrefix(arg, "-") {
+			if target != "" {
+				return "", nil, fmt.Errorf("force requires exactly one version")
+			}
+			target = arg
+			continue
+		}
+		flagArgs = append(flagArgs, arg)
+		if forceFlagNeedsValue(arg) {
+			if i+1 >= len(args) {
+				return "", nil, fmt.Errorf("flag %s requires a value", arg)
+			}
+			i++
+			flagArgs = append(flagArgs, args[i])
+		}
+	}
+	if target == "" {
+		return "", nil, fmt.Errorf("force requires exactly one version")
+	}
+	return target, flagArgs, nil
+}
+
+func forceFlagNeedsValue(arg string) bool {
+	if strings.Contains(arg, "=") {
+		return false
+	}
+	switch arg {
+	case "--driver", "--source-dir", "--dsn", "--confirm-force":
+		return true
+	default:
+		return false
+	}
 }
