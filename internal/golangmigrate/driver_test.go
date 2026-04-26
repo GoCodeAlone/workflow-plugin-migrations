@@ -228,6 +228,7 @@ func TestDriver_RepairDirtyGuardsExpectedVersion(t *testing.T) {
 	_, err = d.RepairDirty(ctx, req, golangmigrate.RepairDirtyOptions{
 		ExpectedDirtyVersion: "3",
 		ForceVersion:         "1",
+		UpIfClean:            true,
 	})
 	if err == nil {
 		t.Fatal("RepairDirty() wrong-version error = nil; want refusal")
@@ -263,6 +264,54 @@ func TestDriver_RepairDirtyGuardsExpectedVersion(t *testing.T) {
 	}
 	if st.Current != "1" || st.Dirty {
 		t.Fatalf("Status() after RepairDirty = current %q dirty %v; want current 1 clean", st.Current, st.Dirty)
+	}
+}
+
+func TestDriver_RepairDirtyUpIfCleanAppliesPendingMigrations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: requires postgres (set up with testharness)")
+	}
+	h, err := testharness.New()
+	if err != nil {
+		t.Skipf("skipping: no postgres available: %v", err)
+	}
+	defer h.Close(t)
+
+	dir := t.TempDir()
+	writeSQL(t, dir, "000001_users.up.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);")
+	writeSQL(t, dir, "000001_users.down.sql", "DROP TABLE IF EXISTS users;")
+	writeSQL(t, dir, "000002_posts.up.sql", "CREATE TABLE posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL);")
+	writeSQL(t, dir, "000002_posts.down.sql", "DROP TABLE IF EXISTS posts;")
+
+	ctx := context.Background()
+	d := golangmigrate.New()
+	req := interfaces.MigrationRequest{
+		DSN: h.DSN(),
+		Source: interfaces.MigrationSource{
+			Dir: dir,
+		},
+	}
+	if _, err := d.Goto(ctx, req, "1"); err != nil {
+		t.Fatalf("Goto(1) error: %v", err)
+	}
+
+	result, err := d.RepairDirty(ctx, req, golangmigrate.RepairDirtyOptions{
+		ExpectedDirtyVersion: "2",
+		ForceVersion:         "1",
+		UpIfClean:            true,
+	})
+	if err != nil {
+		t.Fatalf("RepairDirty(UpIfClean) error: %v", err)
+	}
+	if len(result.Applied) != 1 || result.Applied[0] != "2" {
+		t.Fatalf("RepairDirty(UpIfClean) Applied = %v; want [2]", result.Applied)
+	}
+	st, err := d.Status(ctx, req)
+	if err != nil {
+		t.Fatalf("Status() after RepairDirty(UpIfClean) error: %v", err)
+	}
+	if st.Current != "2" || st.Dirty {
+		t.Fatalf("Status() after RepairDirty(UpIfClean) = current %q dirty %v; want current 2 clean", st.Current, st.Dirty)
 	}
 }
 

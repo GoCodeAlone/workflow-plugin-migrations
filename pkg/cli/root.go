@@ -251,15 +251,16 @@ func newForceCmd() *cobra.Command {
 func newRepairDirtyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repair-dirty",
-		Short: "Repair a known dirty golang-migrate metadata version",
+		Short: "Repair a known dirty migration state or run up when already clean",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			confirmation, _ := cmd.Flags().GetString("confirm-force")
 			if confirmation != "FORCE_MIGRATION_METADATA" {
-				return fmt.Errorf("repair-dirty mutates migration metadata without applying SQL; pass --confirm-force FORCE_MIGRATION_METADATA to continue")
+				return fmt.Errorf("repair-dirty may mutate migration metadata; pass --confirm-force FORCE_MIGRATION_METADATA to continue")
 			}
 			expected, _ := cmd.Flags().GetString("expected-dirty-version")
 			forceVersion, _ := cmd.Flags().GetString("force-version")
 			thenUp, _ := cmd.Flags().GetBool("then-up")
+			upIfClean, _ := cmd.Flags().GetBool("up-if-clean")
 
 			d, req, err := buildDriverAndRequest(cmd)
 			if err != nil {
@@ -273,17 +274,18 @@ func newRepairDirtyCmd() *cobra.Command {
 			result, err := repairer.RepairDirty(context.Background(), req, golangmigrate.RepairDirtyOptions{
 				ExpectedDirtyVersion: expected,
 				ForceVersion:         forceVersion,
-				ThenUp:               thenUp,
+				ThenUp:               thenUp || upIfClean,
+				UpIfClean:            upIfClean,
 			})
 			if err != nil {
 				return fmt.Errorf("migrate repair-dirty: %w", err)
 			}
-			if thenUp {
+			if thenUp || upIfClean {
 				if len(result.Applied) == 0 {
-					fmt.Printf("Repaired dirty metadata at version %s to %s; no pending migrations. Duration: %dms\n", expected, forceVersion, result.DurationMs)
+					fmt.Printf("Repair-dirty completed; no pending migrations. Duration: %dms\n", result.DurationMs)
 					return nil
 				}
-				fmt.Printf("Repaired dirty metadata at version %s to %s; applied %d migration(s): %v. Duration: %dms\n", expected, forceVersion, len(result.Applied), result.Applied, result.DurationMs)
+				fmt.Printf("Repair-dirty completed; applied %d migration(s): %v. Duration: %dms\n", len(result.Applied), result.Applied, result.DurationMs)
 				return nil
 			}
 			fmt.Printf("Repaired dirty metadata at version %s to %s; no migrations applied. Duration: %dms\n", expected, forceVersion, result.DurationMs)
@@ -295,6 +297,7 @@ func newRepairDirtyCmd() *cobra.Command {
 	cmd.Flags().String("force-version", "", "Version to force-set after the dirty version guard passes")
 	cmd.Flags().String("confirm-force", "", "Typed confirmation required: FORCE_MIGRATION_METADATA")
 	cmd.Flags().Bool("then-up", false, "Run pending migrations after successful metadata repair")
+	cmd.Flags().Bool("up-if-clean", false, "Run normal up when the database is already clean; implies --then-up")
 	_ = cmd.MarkFlagRequired("expected-dirty-version")
 	_ = cmd.MarkFlagRequired("force-version")
 	return cmd
