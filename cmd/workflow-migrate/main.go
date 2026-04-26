@@ -9,6 +9,7 @@
 //	workflow-migrate status [flags]
 //	workflow-migrate goto <version> [flags]
 //	workflow-migrate force <version> [flags]
+//	workflow-migrate repair-dirty [flags]
 package main
 
 import (

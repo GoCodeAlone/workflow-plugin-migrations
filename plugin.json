@@ -35,6 +35,7 @@
                     {"name": "status", "description": "Show migration status"},
                     {"name": "goto", "description": "Migrate to a specific version"},
                     {"name": "force", "description": "Force-set the recorded migration version"},
+                    {"name": "repair-dirty", "description": "Repair a known dirty migration metadata state"},
                     {"name": "lint", "description": "Static analysis for migration files"},
                     {"name": "test", "description": "Run full-cycle and checkpoint migration tests"},
                     {"name": "tenant-ensure", "description": "Ensure a tenant schema exists in the database"}

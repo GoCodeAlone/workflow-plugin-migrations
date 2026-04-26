@@ -181,6 +181,187 @@ func TestDriver_ForceRejectsInvalidTarget(t *testing.T) {
 	}
 }
 
+func TestDriver_RepairDirtyGuardsExpectedVersion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: requires postgres (set up with testharness)")
+	}
+	h, err := testharness.New()
+	if err != nil {
+		t.Skipf("skipping: no postgres available: %v", err)
+	}
+	defer h.Close(t)
+
+	dir := t.TempDir()
+	writeSQL(t, dir, "000001_users.up.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);")
+	writeSQL(t, dir, "000001_users.down.sql", "DROP TABLE IF EXISTS users;")
+	writeSQL(t, dir, "000002_posts.up.sql", "CREATE TABLE posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL);")
+	writeSQL(t, dir, "000002_posts.down.sql", "DROP TABLE IF EXISTS posts;")
+	writeSQL(t, dir, "000003_comments.up.sql", "CREATE TABLE comments (id SERIAL PRIMARY KEY, body TEXT NOT NULL);")
+	writeSQL(t, dir, "000003_comments.down.sql", "DROP TABLE IF EXISTS comments;")
+
+	ctx := context.Background()
+	d := golangmigrate.New()
+	req := interfaces.MigrationRequest{
+		DSN: h.DSN(),
+		Source: interfaces.MigrationSource{
+			Dir: dir,
+		},
+	}
+
+	if _, err := d.Goto(ctx, req, "1"); err != nil {
+		t.Fatalf("Goto(1) error: %v", err)
+	}
+
+	_, err = d.RepairDirty(ctx, req, golangmigrate.RepairDirtyOptions{
+		ExpectedDirtyVersion: "2",
+		ForceVersion:         "1",
+	})
+	if err == nil {
+		t.Fatal("RepairDirty() clean error = nil; want refusal")
+	}
+	if !strings.Contains(err.Error(), "database is clean") {
+		t.Fatalf("RepairDirty() clean error = %v; want clean refusal", err)
+	}
+
+	markDirty(t, h.DSN(), 2)
+
+	_, err = d.RepairDirty(ctx, req, golangmigrate.RepairDirtyOptions{
+		ExpectedDirtyVersion: "3",
+		ForceVersion:         "1",
+	})
+	if err == nil {
+		t.Fatal("RepairDirty() wrong-version error = nil; want refusal")
+	}
+	if !strings.Contains(err.Error(), "dirty at version 2, expected 3") {
+		t.Fatalf("RepairDirty() wrong-version error = %v; want exact-version refusal", err)
+	}
+
+	_, err = d.RepairDirty(ctx, req, golangmigrate.RepairDirtyOptions{
+		ExpectedDirtyVersion: "2",
+		ForceVersion:         "3",
+	})
+	if err == nil {
+		t.Fatal("RepairDirty() forward-force error = nil; want refusal")
+	}
+	if !strings.Contains(err.Error(), "must not be greater than expected dirty version") {
+		t.Fatalf("RepairDirty() forward-force error = %v; want forward-force refusal", err)
+	}
+
+	result, err := d.RepairDirty(ctx, req, golangmigrate.RepairDirtyOptions{
+		ExpectedDirtyVersion: "2",
+		ForceVersion:         "1",
+	})
+	if err != nil {
+		t.Fatalf("RepairDirty() error: %v", err)
+	}
+	if len(result.Applied) != 0 {
+		t.Fatalf("RepairDirty() Applied = %v; metadata repair must not report applied migrations", result.Applied)
+	}
+	st, err := d.Status(ctx, req)
+	if err != nil {
+		t.Fatalf("Status() after RepairDirty error: %v", err)
+	}
+	if st.Current != "1" || st.Dirty {
+		t.Fatalf("Status() after RepairDirty = current %q dirty %v; want current 1 clean", st.Current, st.Dirty)
+	}
+}
+
+func TestDriver_RepairDirtyThenUp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: requires postgres (set up with testharness)")
+	}
+	h, err := testharness.New()
+	if err != nil {
+		t.Skipf("skipping: no postgres available: %v", err)
+	}
+	defer h.Close(t)
+
+	dir := t.TempDir()
+	writeSQL(t, dir, "000001_users.up.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);")
+	writeSQL(t, dir, "000001_users.down.sql", "DROP TABLE IF EXISTS users;")
+	writeSQL(t, dir, "000002_posts.up.sql", "CREATE TABLE posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL);")
+	writeSQL(t, dir, "000002_posts.down.sql", "DROP TABLE IF EXISTS posts;")
+
+	ctx := context.Background()
+	d := golangmigrate.New()
+	req := interfaces.MigrationRequest{
+		DSN: h.DSN(),
+		Source: interfaces.MigrationSource{
+			Dir: dir,
+		},
+	}
+	if _, err := d.Goto(ctx, req, "1"); err != nil {
+		t.Fatalf("Goto(1) error: %v", err)
+	}
+	markDirty(t, h.DSN(), 2)
+
+	result, err := d.RepairDirty(ctx, req, golangmigrate.RepairDirtyOptions{
+		ExpectedDirtyVersion: "2",
+		ForceVersion:         "1",
+		ThenUp:               true,
+	})
+	if err != nil {
+		t.Fatalf("RepairDirty(ThenUp) error: %v", err)
+	}
+	if len(result.Applied) != 1 || result.Applied[0] != "2" {
+		t.Fatalf("RepairDirty(ThenUp) Applied = %v; want [2]", result.Applied)
+	}
+	st, err := d.Status(ctx, req)
+	if err != nil {
+		t.Fatalf("Status() after RepairDirty(ThenUp) error: %v", err)
+	}
+	if st.Current != "2" || st.Dirty {
+		t.Fatalf("Status() after RepairDirty(ThenUp) = current %q dirty %v; want current 2 clean", st.Current, st.Dirty)
+	}
+}
+
+func TestDriver_RepairDirtyThenUpReportsPartialRepairOnUpFailure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: requires postgres (set up with testharness)")
+	}
+	h, err := testharness.New()
+	if err != nil {
+		t.Skipf("skipping: no postgres available: %v", err)
+	}
+	defer h.Close(t)
+
+	dir := t.TempDir()
+	writeSQL(t, dir, "000001_users.up.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);")
+	writeSQL(t, dir, "000001_users.down.sql", "DROP TABLE IF EXISTS users;")
+	writeSQL(t, dir, "000002_posts.up.sql", "CREATE TABLE posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL);")
+	writeSQL(t, dir, "000002_posts.down.sql", "DROP TABLE IF EXISTS posts;")
+	writeSQL(t, dir, "000003_broken.up.sql", "THIS IS NOT SQL;")
+	writeSQL(t, dir, "000003_broken.down.sql", "SELECT 1;")
+
+	ctx := context.Background()
+	d := golangmigrate.New()
+	req := interfaces.MigrationRequest{
+		DSN: h.DSN(),
+		Source: interfaces.MigrationSource{
+			Dir: dir,
+		},
+	}
+	if _, err := d.Goto(ctx, req, "1"); err != nil {
+		t.Fatalf("Goto(1) error: %v", err)
+	}
+	markDirty(t, h.DSN(), 2)
+
+	_, err = d.RepairDirty(ctx, req, golangmigrate.RepairDirtyOptions{
+		ExpectedDirtyVersion: "2",
+		ForceVersion:         "1",
+		ThenUp:               true,
+	})
+	if err == nil {
+		t.Fatal("RepairDirty(ThenUp) error = nil; want broken migration failure")
+	}
+	if !strings.Contains(err.Error(), "then-up failed after metadata was repaired to version 1") {
+		t.Fatalf("RepairDirty(ThenUp) error = %v; want partial-repair message", err)
+	}
+	if !strings.Contains(err.Error(), "current version 3 dirty=true") {
+		t.Fatalf("RepairDirty(ThenUp) error = %v; want final dirty status", err)
+	}
+}
+
 func markDirty(t *testing.T, dsn string, version int) {
 	t.Helper()
 	db, err := sql.Open("pgx", dsn)

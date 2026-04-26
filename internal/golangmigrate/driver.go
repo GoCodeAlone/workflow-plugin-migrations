@@ -192,6 +192,13 @@ type ForceOptions struct {
 	AllowClean bool
 }
 
+// RepairDirtyOptions controls a guarded metadata repair for a known dirty migration.
+type RepairDirtyOptions struct {
+	ExpectedDirtyVersion string
+	ForceVersion         string
+	ThenUp               bool
+}
+
 // Force sets the recorded migration version without applying migration files.
 func (d *Driver) Force(_ context.Context, req interfaces.MigrationRequest, target string, opts ForceOptions) (interfaces.MigrationResult, error) {
 	if err := req.Validate(); err != nil {
@@ -235,6 +242,94 @@ func (d *Driver) Force(_ context.Context, req interfaces.MigrationRequest, targe
 		Applied:    nil,
 		DurationMs: time.Since(start).Milliseconds(),
 	}, nil
+}
+
+// RepairDirty verifies the database is dirty at the exact expected version before forcing metadata.
+func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationRequest, opts RepairDirtyOptions) (interfaces.MigrationResult, error) {
+	if err := req.Validate(); err != nil {
+		return interfaces.MigrationResult{}, err
+	}
+	start := time.Now()
+
+	expected, err := parseExpectedDirtyVersion(opts.ExpectedDirtyVersion)
+	if err != nil {
+		return interfaces.MigrationResult{}, err
+	}
+	forceVersion, err := parseForceTarget(opts.ForceVersion)
+	if err != nil {
+		return interfaces.MigrationResult{}, err
+	}
+	if forceVersion > int(expected) {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: force version %q must not be greater than expected dirty version %q", opts.ForceVersion, opts.ExpectedDirtyVersion)
+	}
+
+	expectedExists, err := versionExists(req.Source.Dir, expected)
+	if err != nil {
+		return interfaces.MigrationResult{}, err
+	}
+	if !expectedExists {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: expected dirty version %q does not exist in migration source", opts.ExpectedDirtyVersion)
+	}
+	if forceVersion > 0 {
+		forceExists, err := versionExists(req.Source.Dir, uint(forceVersion))
+		if err != nil {
+			return interfaces.MigrationResult{}, err
+		}
+		if !forceExists {
+			return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: force version %q does not exist in migration source", opts.ForceVersion)
+		}
+	}
+
+	m, err := newMigrate(req)
+	if err != nil {
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
+	}
+
+	current, dirty, err := m.Version()
+	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
+		_, _ = m.Close()
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: version before repair: %w", err)
+	}
+	if !dirty {
+		_, _ = m.Close()
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: database is clean; refusing metadata repair")
+	}
+	if current != expected {
+		_, _ = m.Close()
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: database is dirty at version %d, expected %d", current, expected)
+	}
+
+	if err := m.Force(forceVersion); err != nil {
+		_, _ = m.Close()
+		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty: force: %w", err)
+	}
+	_, _ = m.Close()
+
+	if opts.ThenUp {
+		result, err := d.Up(ctx, req)
+		if err != nil {
+			st, statusErr := d.Status(ctx, req)
+			if statusErr != nil {
+				return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty then-up failed after metadata was repaired to version %s; status after failure unavailable: %v; up error: %w", opts.ForceVersion, statusErr, err)
+			}
+			return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate repair-dirty then-up failed after metadata was repaired to version %s; current version %s dirty=%t: %w", opts.ForceVersion, st.Current, st.Dirty, err)
+		}
+		result.DurationMs = time.Since(start).Milliseconds()
+		return result, nil
+	}
+
+	return interfaces.MigrationResult{
+		Applied:    nil,
+		DurationMs: time.Since(start).Milliseconds(),
+	}, nil
+}
+
+func parseExpectedDirtyVersion(target string) (uint, error) {
+	version, err := strconv.ParseUint(target, 10, 0)
+	if err != nil || version == 0 {
+		return 0, fmt.Errorf("golang-migrate repair-dirty: invalid expected dirty version %q: must be a positive integer", target)
+	}
+	return uint(version), nil
 }
 
 func parseForceTarget(target string) (int, error) {
