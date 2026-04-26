@@ -206,7 +206,7 @@ func (d *Driver) Force(_ context.Context, req interfaces.MigrationRequest, targe
 	}
 	start := time.Now()
 
-	version, err := parseForceTarget(target)
+	version, err := parseForceTarget(target, "force")
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
@@ -255,7 +255,7 @@ func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationReques
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
-	forceVersion, err := parseForceTarget(opts.ForceVersion)
+	forceVersion, err := parseForceTarget(opts.ForceVersion, "repair-dirty")
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
@@ -332,10 +332,10 @@ func parseExpectedDirtyVersion(target string) (uint, error) {
 	return uint(version), nil
 }
 
-func parseForceTarget(target string) (int, error) {
+func parseForceTarget(target, command string) (int, error) {
 	version, err := strconv.Atoi(target)
 	if err != nil || version == 0 || version < -1 {
-		return 0, fmt.Errorf("golang-migrate force: invalid target version %q: must be -1 or a positive integer", target)
+		return 0, fmt.Errorf("golang-migrate %s: invalid target version %q: must be -1 or a positive integer", command, target)
 	}
 	return version, nil
 }

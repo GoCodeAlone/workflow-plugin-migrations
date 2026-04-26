@@ -83,7 +83,7 @@ func TestRepairDirtyCommandRejectsInvalidVersionsBeforeConnecting(t *testing.T) 
 			name:              "force",
 			expected:          "2",
 			forceVersion:      "not-a-version",
-			wantErrorContains: "invalid target version",
+			wantErrorContains: "golang-migrate repair-dirty: invalid target version",
 		},
 	}
 	for _, tt := range tests {
