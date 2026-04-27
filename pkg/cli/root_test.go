@@ -154,6 +154,45 @@ func TestValidateUpgradeCommandFailsDirtyCandidateMigration(t *testing.T) {
 	}
 }
 
+func TestValidateUpgradeCommandRejectsNonEmptySchemaWithoutMigrationMetadata(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: requires postgres (set up with testharness)")
+	}
+	h, err := testharness.New()
+	if err != nil {
+		t.Skipf("skipping: no postgres available: %v", err)
+	}
+	defer h.Close(t)
+
+	db, err := sql.Open("pgx", h.DSN())
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close() //nolint:errcheck
+	if _, err := db.Exec(`CREATE TABLE preexisting_object (id integer)`); err != nil {
+		t.Fatalf("create preexisting object: %v", err)
+	}
+
+	baselineDir := t.TempDir()
+	writeCLISQL(t, baselineDir, "000001_users.up.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY);")
+	writeCLISQL(t, baselineDir, "000001_users.down.sql", "DROP TABLE IF EXISTS users;")
+
+	root := NewRoot()
+	root.SetArgs([]string{
+		"validate-upgrade",
+		"--baseline-source-dir", baselineDir,
+		"--source-dir", baselineDir,
+		"--dsn", h.DSN(),
+	})
+	err = root.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil; want non-empty schema rejection")
+	}
+	if !strings.Contains(err.Error(), "requires an empty schema") {
+		t.Fatalf("Execute() error = %v; want empty schema rejection", err)
+	}
+}
+
 func TestForceCommandRequiresTypedConfirmation(t *testing.T) {
 	root := NewRoot()
 	root.SetArgs([]string{

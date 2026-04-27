@@ -13,7 +13,7 @@ func TestValidateUpgradeRejectsPrePopulatedDatabase(t *testing.T) {
 	driver := &fakeMigrationDriver{
 		statuses: []interfaces.MigrationStatus{{Current: "2"}},
 	}
-	_, err := validateUpgrade(context.Background(), driver, fakeMigrationRequest(t), fakeMigrationRequest(t))
+	_, err := validateUpgradeNoSchemaCheck(context.Background(), driver, fakeMigrationRequest(t), fakeMigrationRequest(t))
 	if err == nil {
 		t.Fatal("validateUpgrade() error = nil; want pre-populated database rejection")
 	}
@@ -29,7 +29,7 @@ func TestValidateUpgradeRejectsInitiallyDirtyDatabase(t *testing.T) {
 	driver := &fakeMigrationDriver{
 		statuses: []interfaces.MigrationStatus{{Current: "2", Dirty: true}},
 	}
-	_, err := validateUpgrade(context.Background(), driver, fakeMigrationRequest(t), fakeMigrationRequest(t))
+	_, err := validateUpgradeNoSchemaCheck(context.Background(), driver, fakeMigrationRequest(t), fakeMigrationRequest(t))
 	if err == nil {
 		t.Fatal("validateUpgrade() error = nil; want dirty database rejection")
 	}
@@ -54,7 +54,7 @@ func TestValidateUpgradeRejectsCandidateSourceMissingBaselineVersion(t *testing.
 		},
 		upResults: []interfaces.MigrationResult{{Applied: []string{"1"}}},
 	}
-	_, err := validateUpgrade(context.Background(), driver,
+	_, err := validateUpgradeNoSchemaCheck(context.Background(), driver,
 		interfaces.MigrationRequest{DSN: "fake", Source: interfaces.MigrationSource{Dir: baselineDir}},
 		interfaces.MigrationRequest{DSN: "fake", Source: interfaces.MigrationSource{Dir: candidateDir}},
 	)
@@ -63,6 +63,35 @@ func TestValidateUpgradeRejectsCandidateSourceMissingBaselineVersion(t *testing.
 	}
 	if !strings.Contains(err.Error(), "does not contain recorded baseline version 1") {
 		t.Fatalf("validateUpgrade() error = %v; want missing baseline version", err)
+	}
+}
+
+func TestValidateUpgradeRejectsCandidateSourceWithDownOnlyBaselineVersion(t *testing.T) {
+	baselineDir := t.TempDir()
+	writeCLISQL(t, baselineDir, "000001_users.up.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY);")
+	writeCLISQL(t, baselineDir, "000001_users.down.sql", "DROP TABLE IF EXISTS users;")
+
+	candidateDir := t.TempDir()
+	writeCLISQL(t, candidateDir, "000001_users.down.sql", "DROP TABLE IF EXISTS users;")
+	writeCLISQL(t, candidateDir, "000002_posts.up.sql", "CREATE TABLE posts (id SERIAL PRIMARY KEY);")
+	writeCLISQL(t, candidateDir, "000002_posts.down.sql", "DROP TABLE IF EXISTS posts;")
+
+	driver := &fakeMigrationDriver{
+		statuses: []interfaces.MigrationStatus{
+			{},
+			{Current: "1"},
+		},
+		upResults: []interfaces.MigrationResult{{Applied: []string{"1"}}},
+	}
+	_, err := validateUpgradeNoSchemaCheck(context.Background(), driver,
+		interfaces.MigrationRequest{DSN: "fake", Source: interfaces.MigrationSource{Dir: baselineDir}},
+		interfaces.MigrationRequest{DSN: "fake", Source: interfaces.MigrationSource{Dir: candidateDir}},
+	)
+	if err == nil {
+		t.Fatal("validateUpgrade() error = nil; want down-only candidate source consistency error")
+	}
+	if !strings.Contains(err.Error(), "does not contain recorded baseline version 1") {
+		t.Fatalf("validateUpgrade() error = %v; want missing executable baseline version", err)
 	}
 }
 
@@ -82,7 +111,7 @@ func TestValidateUpgradeFailsWhenCandidateStatusStillHasPending(t *testing.T) {
 			{},
 		},
 	}
-	_, err := validateUpgrade(context.Background(), driver,
+	_, err := validateUpgradeNoSchemaCheck(context.Background(), driver,
 		interfaces.MigrationRequest{DSN: "fake", Source: interfaces.MigrationSource{Dir: sourceDir}},
 		interfaces.MigrationRequest{DSN: "fake", Source: interfaces.MigrationSource{Dir: sourceDir}},
 	)
@@ -92,6 +121,51 @@ func TestValidateUpgradeFailsWhenCandidateStatusStillHasPending(t *testing.T) {
 	if !strings.Contains(err.Error(), "candidate has pending migrations after up") {
 		t.Fatalf("validateUpgrade() error = %v; want candidate pending context", err)
 	}
+}
+
+func TestValidateUpgradeFakeDriverSuccess(t *testing.T) {
+	sourceDir := t.TempDir()
+	writeCLISQL(t, sourceDir, "000001_users.up.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY);")
+	writeCLISQL(t, sourceDir, "000001_users.down.sql", "DROP TABLE IF EXISTS users;")
+	writeCLISQL(t, sourceDir, "000002_posts.up.sql", "CREATE TABLE posts (id SERIAL PRIMARY KEY);")
+	writeCLISQL(t, sourceDir, "000002_posts.down.sql", "DROP TABLE IF EXISTS posts;")
+
+	driver := &fakeMigrationDriver{
+		statuses: []interfaces.MigrationStatus{
+			{},
+			{Current: "1"},
+			{Current: "2"},
+		},
+		upResults: []interfaces.MigrationResult{
+			{Applied: []string{"1"}},
+			{Applied: []string{"2"}},
+		},
+	}
+	result, err := validateUpgradeNoSchemaCheck(context.Background(), driver,
+		interfaces.MigrationRequest{DSN: "fake", Source: interfaces.MigrationSource{Dir: sourceDir}},
+		interfaces.MigrationRequest{DSN: "fake", Source: interfaces.MigrationSource{Dir: sourceDir}},
+	)
+	if err != nil {
+		t.Fatalf("validateUpgrade() error: %v", err)
+	}
+	if got := strings.Join(result.BaselineApplied, ","); got != "1" {
+		t.Fatalf("BaselineApplied = %q; want 1", got)
+	}
+	if got := strings.Join(result.CandidateApplied, ","); got != "2" {
+		t.Fatalf("CandidateApplied = %q; want 2", got)
+	}
+	if result.Current != "2" {
+		t.Fatalf("Current = %q; want 2", result.Current)
+	}
+	if driver.upCalls != 2 {
+		t.Fatalf("Up() calls = %d; want 2", driver.upCalls)
+	}
+}
+
+func validateUpgradeNoSchemaCheck(ctx context.Context, d interfaces.MigrationDriver, baselineReq, candidateReq interfaces.MigrationRequest) (upgradeValidationResult, error) {
+	return validateUpgradeWithSchemaCheck(ctx, d, baselineReq, candidateReq, func(context.Context, string) error {
+		return nil
+	})
 }
 
 func fakeMigrationRequest(t *testing.T) interfaces.MigrationRequest {

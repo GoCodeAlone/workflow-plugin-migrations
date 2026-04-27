@@ -2,10 +2,10 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -17,12 +17,13 @@ func newValidateUpgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate-upgrade",
 		Short: "Validate baseline-to-candidate migration upgrade path",
-		Long: `Validate an upgrade path by applying baseline migrations to the
-configured database, then applying candidate migrations to the same database.
+		Long: `Validate an upgrade path by applying baseline migrations to an
+empty configured database, then applying candidate migrations to the same database.
 
 This catches failures that fresh-database migration tests miss, such as a
 candidate migration that only fails when the current production schema already
-contains the latest baseline migrations.`,
+contains the latest baseline migrations. The supplied database/schema must start
+clean, with no user objects and no recorded migration version.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			baselineDir, _ := cmd.Flags().GetString("baseline-source-dir")
 			if baselineDir == "" {
@@ -59,6 +60,13 @@ type upgradeValidationResult struct {
 }
 
 func validateUpgrade(ctx context.Context, d interfaces.MigrationDriver, baselineReq, candidateReq interfaces.MigrationRequest) (upgradeValidationResult, error) {
+	return validateUpgradeWithSchemaCheck(ctx, d, baselineReq, candidateReq, ensureEmptySchema)
+}
+
+func validateUpgradeWithSchemaCheck(ctx context.Context, d interfaces.MigrationDriver, baselineReq, candidateReq interfaces.MigrationRequest, checkSchema func(context.Context, string) error) (upgradeValidationResult, error) {
+	if err := checkSchema(ctx, baselineReq.DSN); err != nil {
+		return upgradeValidationResult{}, fmt.Errorf("validate-upgrade initial database check: %w", err)
+	}
 	initialStatus, err := d.Status(ctx, baselineReq)
 	if err != nil {
 		return upgradeValidationResult{}, fmt.Errorf("validate-upgrade initial status: %w", err)
@@ -112,11 +120,32 @@ func validateUpgrade(ctx context.Context, d interfaces.MigrationDriver, baseline
 	}, nil
 }
 
-func sourceContainsVersion(dir, version string) error {
-	want, err := strconv.ParseUint(version, 10, 64)
+func ensureEmptySchema(ctx context.Context, dsn string) error {
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return fmt.Errorf("invalid recorded baseline version %q: %w", version, err)
+		return err
 	}
+	defer db.Close() //nolint:errcheck
+
+	var objectCount int
+	err = db.QueryRowContext(ctx, `
+SELECT count(*)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = current_schema()
+  AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+  AND c.relname NOT IN ('schema_migrations', 'goose_db_version', 'atlas_schema_revisions')
+`).Scan(&objectCount)
+	if err != nil {
+		return err
+	}
+	if objectCount > 0 {
+		return fmt.Errorf("requires an empty schema; found %d existing user object(s)", objectCount)
+	}
+	return nil
+}
+
+func sourceContainsVersion(dir, version string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("read source dir %s: %w", dir, err)
@@ -125,14 +154,23 @@ func sourceContainsVersion(dir, version string) error {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
+		if strings.HasSuffix(entry.Name(), ".down.sql") {
+			continue
+		}
 		matches := migrationFilenameVersionRe.FindStringSubmatch(entry.Name())
 		if len(matches) != 2 {
 			continue
 		}
-		got, err := strconv.ParseUint(matches[1], 10, 64)
-		if err == nil && got == want {
+		if versionsEqual(matches[1], version) {
 			return nil
 		}
 	}
 	return fmt.Errorf("source dir %s does not contain recorded baseline version %s", dir, version)
+}
+
+func versionsEqual(sourceVersion, recordedVersion string) bool {
+	if sourceVersion == recordedVersion {
+		return true
+	}
+	return strings.TrimLeft(sourceVersion, "0") == strings.TrimLeft(recordedVersion, "0")
 }
