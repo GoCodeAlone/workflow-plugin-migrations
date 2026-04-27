@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/GoCodeAlone/workflow-plugin-migrations/pkg/testharness"
+	"github.com/GoCodeAlone/workflow/interfaces"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -37,6 +39,29 @@ func TestRootIncludesRepairDirtyCommand(t *testing.T) {
 		t.Fatal("repair-dirty --up-if-clean flag is missing")
 	} else if !strings.Contains(flag.Usage, "implies --then-up") {
 		t.Fatalf("--up-if-clean usage = %q; want then-up implication documented", flag.Usage)
+	}
+}
+
+func TestWriteStatusIncludesExplicitDirtyFlag(t *testing.T) {
+	var out bytes.Buffer
+	writeStatus(&out, interfaces.MigrationStatus{
+		Current: "202604270001",
+		Dirty:   false,
+	})
+
+	got := out.String()
+	if !strings.Contains(got, "Dirty: false") {
+		t.Fatalf("status output = %q; want explicit clean dirty flag", got)
+	}
+
+	out.Reset()
+	writeStatus(&out, interfaces.MigrationStatus{
+		Current: "202604270001",
+		Dirty:   true,
+	})
+	got = out.String()
+	if !strings.Contains(got, "Dirty: true") || !strings.Contains(got, "WARNING: database is in dirty state!") {
+		t.Fatalf("status output = %q; want explicit dirty flag and warning", got)
 	}
 }
 
