@@ -49,6 +49,7 @@ func NewRoot() *cobra.Command {
 		newGotoCmd(),
 		newForceCmd(),
 		newRepairDirtyCmd(),
+		newValidateUpgradeCmd(),
 		newLintCmd(),
 		newTestCmd(),
 		newTenantEnsureCmd(),
