@@ -10,6 +10,7 @@
 //	workflow-migrate goto <version> [flags]
 //	workflow-migrate force <version> [flags]
 //	workflow-migrate repair-dirty [flags]
+//	workflow-migrate validate-upgrade --baseline-source-dir <dir> --source-dir <dir> [flags]
 //
 // Use repair-dirty --up-if-clean to leave a guarded repair command in deploy
 // config after the dirty state has been repaired.
