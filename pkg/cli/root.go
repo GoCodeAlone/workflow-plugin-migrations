@@ -6,6 +6,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -158,24 +159,29 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("migrate status: %w", err)
 			}
-			if st.Current == "" {
-				fmt.Println("No migrations applied.")
-			} else {
-				fmt.Printf("Current: %s\n", st.Current)
-			}
-			if len(st.Pending) > 0 {
-				fmt.Printf("Pending: %v\n", st.Pending)
-			} else {
-				fmt.Println("No pending migrations.")
-			}
-			if st.Dirty {
-				fmt.Println("WARNING: database is in dirty state!")
-			}
+			writeStatus(cmd.OutOrStdout(), st)
 			return nil
 		},
 	}
 	sharedFlags(cmd)
 	return cmd
+}
+
+func writeStatus(out io.Writer, st interfaces.MigrationStatus) {
+	if st.Current == "" {
+		fmt.Fprintln(out, "No migrations applied.")
+	} else {
+		fmt.Fprintf(out, "Current: %s\n", st.Current)
+	}
+	if len(st.Pending) > 0 {
+		fmt.Fprintf(out, "Pending: %v\n", st.Pending)
+	} else {
+		fmt.Fprintln(out, "No pending migrations.")
+	}
+	fmt.Fprintf(out, "Dirty: %t\n", st.Dirty)
+	if st.Dirty {
+		fmt.Fprintln(out, "WARNING: database is in dirty state!")
+	}
 }
 
 func newGotoCmd() *cobra.Command {
