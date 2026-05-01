@@ -320,7 +320,7 @@ func PluginStepSchemas() []*schema.StepSchema {
 				{Key: "dsn_env", Label: "DSN Env Var", Type: schema.FieldTypeString, Description: "Environment variable name holding the database DSN", DefaultValue: "DATABASE_URL"},
 				{Key: "dsn", Label: "DSN", Type: schema.FieldTypeString, Description: "Literal database DSN (overrides dsn_env)", Sensitive: true},
 				{Key: "timeout", Label: "Timeout", Type: schema.FieldTypeDuration, Description: "Operation timeout (e.g. 5m)", DefaultValue: "5m"},
-				{Key: "steps", Label: "Steps", Type: schema.FieldTypeNumber, Description: "Number of migrations to roll back", DefaultValue: "1"},
+				{Key: "steps", Label: "Steps", Type: schema.FieldTypeNumber, Description: "Number of migrations to roll back", DefaultValue: 1},
 			},
 			Outputs: []schema.StepOutputDef{
 				{Key: "applied", Type: "int", Description: "Number of migrations rolled back"},

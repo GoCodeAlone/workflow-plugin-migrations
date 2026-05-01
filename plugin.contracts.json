@@ -1,7 +1,7 @@
 {
     "version": "1.0",
     "plugin": "workflow-plugin-migrations",
-    "description": "Strict contract descriptors for all module and step types provided by workflow-plugin-migrations.",
+    "description": "Strict contract descriptors for all module and step types provided by workflow-plugin-migrations. Field types use the dynamic.FieldType vocabulary: string, int, bool, float, map, slice, any.",
     "moduleContracts": [
         {
             "type": "database.migrations",
