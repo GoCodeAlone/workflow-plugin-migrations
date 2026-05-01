@@ -7,6 +7,7 @@ package internal
 import (
 	"fmt"
 
+	"github.com/GoCodeAlone/workflow/dynamic"
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
 
 	"github.com/GoCodeAlone/workflow-plugin-migrations/internal/steps"
@@ -15,7 +16,8 @@ import (
 // Version is set at build time via -ldflags.
 var Version = "0.0.0"
 
-// MigrationsPlugin implements sdk.PluginProvider, sdk.ModuleProvider, and sdk.StepProvider.
+// MigrationsPlugin implements sdk.PluginProvider, sdk.ModuleProvider, sdk.StepProvider,
+// sdk.SchemaProvider, and ContractProvider.
 type MigrationsPlugin struct{}
 
 // NewPlugin returns a new plugin instance.
@@ -77,4 +79,25 @@ func (p *MigrationsPlugin) CreateStep(typeName, name string, cfg map[string]any)
 	default:
 		return nil, fmt.Errorf("workflow-plugin-migrations: unknown step type %q", typeName)
 	}
+}
+
+// ModuleSchemas implements sdk.SchemaProvider. It returns schema metadata for
+// each module type provided by this plugin so that the Workflow editor and
+// wfctl tooling can provide field completions and documentation.
+func (p *MigrationsPlugin) ModuleSchemas() []sdk.ModuleSchemaData {
+	return PluginModuleSchemas()
+}
+
+// ModuleContracts returns strict field contracts for each module type.
+// These contracts are used by the Workflow engine to validate configurations
+// at startup and by wfctl audit to check for missing descriptors.
+func (p *MigrationsPlugin) ModuleContracts() map[string]*dynamic.FieldContract {
+	return moduleContracts()
+}
+
+// StepContracts returns strict field contracts for each step type.
+// These contracts are used by the Workflow engine to validate step inputs
+// at pipeline execution time and by wfctl audit for static analysis.
+func (p *MigrationsPlugin) StepContracts() map[string]*dynamic.FieldContract {
+	return stepContracts()
 }

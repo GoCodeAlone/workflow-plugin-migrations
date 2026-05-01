@@ -1,0 +1,188 @@
+{
+    "version": "1.0",
+    "plugin": "workflow-plugin-migrations",
+    "description": "Strict contract descriptors for all module and step types provided by workflow-plugin-migrations.",
+    "moduleContracts": [
+        {
+            "type": "database.migrations",
+            "description": "Manages database migrations using golang-migrate or goose drivers. Provides up/down/status/goto service methods.",
+            "config": {
+                "required": {
+                    "source_dir": {"type": "string", "description": "Directory containing migration files"}
+                },
+                "optional": {
+                    "driver":        {"type": "string", "description": "Migration driver: golang-migrate (default) or goose", "default": "golang-migrate"},
+                    "driver_ref":    {"type": "string", "description": "Reference to a database.migration_driver module (or literal driver name)"},
+                    "dsn_env":       {"type": "string", "description": "Environment variable name holding the database DSN", "default": "DATABASE_URL"},
+                    "history_table": {"type": "string", "description": "Migration history table name (driver default if empty)"},
+                    "timeout":       {"type": "string", "description": "Operation timeout as a Go duration string (e.g. 5m)", "default": "5m"}
+                }
+            },
+            "methods": {
+                "up": {
+                    "description": "Apply all pending migrations",
+                    "inputs": {
+                        "optional": {
+                            "dsn":        {"type": "string", "description": "Literal database DSN (overrides dsn_env)"},
+                            "source_dir": {"type": "string", "description": "Override source directory for this call"}
+                        }
+                    },
+                    "outputs": {
+                        "applied":     {"type": "int", "description": "Number of migrations applied"},
+                        "skipped":     {"type": "int", "description": "Number of migrations skipped"},
+                        "duration_ms": {"type": "int", "description": "Total execution time in milliseconds"}
+                    }
+                },
+                "down": {
+                    "description": "Roll back N migrations",
+                    "inputs": {
+                        "optional": {
+                            "dsn":        {"type": "string", "description": "Literal database DSN (overrides dsn_env)"},
+                            "source_dir": {"type": "string", "description": "Override source directory for this call"},
+                            "steps":      {"type": "int",    "description": "Number of migrations to roll back", "default": 1}
+                        }
+                    },
+                    "outputs": {
+                        "applied":     {"type": "int", "description": "Number of migrations rolled back"},
+                        "skipped":     {"type": "int", "description": "Number of migrations skipped"},
+                        "duration_ms": {"type": "int", "description": "Total execution time in milliseconds"}
+                    }
+                },
+                "status": {
+                    "description": "Return current migration status",
+                    "inputs": {
+                        "optional": {
+                            "dsn":        {"type": "string", "description": "Literal database DSN (overrides dsn_env)"},
+                            "source_dir": {"type": "string", "description": "Override source directory for this call"}
+                        }
+                    },
+                    "outputs": {
+                        "current": {"type": "string", "description": "Current applied migration version"},
+                        "pending": {"type": "int",    "description": "Number of pending (unapplied) migrations"},
+                        "dirty":   {"type": "bool",   "description": "Whether the database is in a dirty migration state"}
+                    }
+                },
+                "goto": {
+                    "description": "Migrate to a specific version",
+                    "inputs": {
+                        "required": {
+                            "target": {"type": "string", "description": "Target migration version to migrate to"}
+                        },
+                        "optional": {
+                            "dsn":        {"type": "string", "description": "Literal database DSN (overrides dsn_env)"},
+                            "source_dir": {"type": "string", "description": "Override source directory for this call"}
+                        }
+                    },
+                    "outputs": {
+                        "applied":     {"type": "int", "description": "Number of migrations applied or rolled back to reach target"},
+                        "skipped":     {"type": "int", "description": "Number of migrations skipped"},
+                        "duration_ms": {"type": "int", "description": "Total execution time in milliseconds"}
+                    }
+                }
+            }
+        },
+        {
+            "type": "database.migration_driver",
+            "description": "Declares a named migration driver for reference by database.migrations modules.",
+            "config": {
+                "required": {
+                    "driver": {"type": "string", "description": "Driver name: golang-migrate, goose, or atlas", "enum": ["golang-migrate", "goose", "atlas"]}
+                },
+                "optional": {}
+            },
+            "methods": {
+                "driver_name": {
+                    "description": "Return the configured driver name",
+                    "inputs": {},
+                    "outputs": {
+                        "driver": {"type": "string", "description": "The resolved driver name"}
+                    }
+                }
+            }
+        }
+    ],
+    "stepContracts": [
+        {
+            "type": "step.migrate_up",
+            "description": "Applies all pending database migrations (up direction).",
+            "config": {
+                "required": {
+                    "source_dir": {"type": "string", "description": "Directory containing migration files"}
+                },
+                "optional": {
+                    "driver":  {"type": "string", "description": "Migration driver: golang-migrate (default) or goose", "default": "golang-migrate"},
+                    "dsn_env": {"type": "string", "description": "Environment variable name holding the database DSN", "default": "DATABASE_URL"},
+                    "dsn":     {"type": "string", "description": "Literal database DSN (overrides dsn_env)", "sensitive": true},
+                    "timeout": {"type": "string", "description": "Operation timeout as a Go duration string (e.g. 5m)", "default": "5m"}
+                }
+            },
+            "outputs": {
+                "applied":     {"type": "int", "description": "Number of migrations applied"},
+                "skipped":     {"type": "int", "description": "Number of migrations skipped (already applied)"},
+                "duration_ms": {"type": "int", "description": "Total execution time in milliseconds"}
+            }
+        },
+        {
+            "type": "step.migrate_down",
+            "description": "Rolls back N database migrations (down direction).",
+            "config": {
+                "required": {
+                    "source_dir": {"type": "string", "description": "Directory containing migration files"}
+                },
+                "optional": {
+                    "driver":  {"type": "string", "description": "Migration driver: golang-migrate (default) or goose", "default": "golang-migrate"},
+                    "dsn_env": {"type": "string", "description": "Environment variable name holding the database DSN", "default": "DATABASE_URL"},
+                    "dsn":     {"type": "string", "description": "Literal database DSN (overrides dsn_env)", "sensitive": true},
+                    "timeout": {"type": "string", "description": "Operation timeout as a Go duration string (e.g. 5m)", "default": "5m"},
+                    "steps":   {"type": "int",    "description": "Number of migrations to roll back", "default": 1}
+                }
+            },
+            "outputs": {
+                "applied":     {"type": "int", "description": "Number of migrations rolled back"},
+                "skipped":     {"type": "int", "description": "Number of migrations skipped"},
+                "duration_ms": {"type": "int", "description": "Total execution time in milliseconds"}
+            }
+        },
+        {
+            "type": "step.migrate_status",
+            "description": "Returns the current database migration status.",
+            "config": {
+                "required": {
+                    "source_dir": {"type": "string", "description": "Directory containing migration files"}
+                },
+                "optional": {
+                    "driver":  {"type": "string", "description": "Migration driver: golang-migrate (default) or goose", "default": "golang-migrate"},
+                    "dsn_env": {"type": "string", "description": "Environment variable name holding the database DSN", "default": "DATABASE_URL"},
+                    "dsn":     {"type": "string", "description": "Literal database DSN (overrides dsn_env)", "sensitive": true},
+                    "timeout": {"type": "string", "description": "Operation timeout as a Go duration string (e.g. 5m)", "default": "5m"}
+                }
+            },
+            "outputs": {
+                "current": {"type": "string", "description": "Current applied migration version"},
+                "pending": {"type": "int",    "description": "Number of pending (unapplied) migrations"},
+                "dirty":   {"type": "bool",   "description": "Whether the database is in a dirty migration state"}
+            }
+        },
+        {
+            "type": "step.migrate_to",
+            "description": "Migrates the database to a specific version (up or down as needed).",
+            "config": {
+                "required": {
+                    "source_dir": {"type": "string", "description": "Directory containing migration files"},
+                    "target":     {"type": "string", "description": "Target migration version to migrate to"}
+                },
+                "optional": {
+                    "driver":  {"type": "string", "description": "Migration driver: golang-migrate (default) or goose", "default": "golang-migrate"},
+                    "dsn_env": {"type": "string", "description": "Environment variable name holding the database DSN", "default": "DATABASE_URL"},
+                    "dsn":     {"type": "string", "description": "Literal database DSN (overrides dsn_env)", "sensitive": true},
+                    "timeout": {"type": "string", "description": "Operation timeout as a Go duration string (e.g. 5m)", "default": "5m"}
+                }
+            },
+            "outputs": {
+                "applied":     {"type": "int", "description": "Number of migrations applied or rolled back to reach the target"},
+                "skipped":     {"type": "int", "description": "Number of migrations skipped"},
+                "duration_ms": {"type": "int", "description": "Total execution time in milliseconds"}
+            }
+        }
+    ]
+}
