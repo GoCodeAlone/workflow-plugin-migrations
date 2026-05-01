@@ -1,12 +1,11 @@
 {
     "name": "workflow-plugin-migrations",
-    "version": "0.0.0",
+    "version": "0.3.6",
     "description": "Database migration plugin for the workflow engine: golang-migrate + goose + atlas drivers, pre-deploy runner, wfctl migrate CLI, static lint tool",
     "author": "GoCodeAlone",
     "license": "Apache-2.0",
     "type": "external",
     "tier": "community",
-    "private": false,
     "minEngineVersion": "0.18.0",
     "keywords": ["migrations", "database", "postgres", "golang-migrate", "goose", "atlas"],
     "homepage": "https://github.com/GoCodeAlone/workflow-plugin-migrations",
@@ -28,24 +27,33 @@
         "cliCommands": [
             {
                 "name": "migrate",
-                "description": "Run and inspect database migrations",
-                "subcommands": [
-                    {"name": "up", "description": "Apply all pending migrations"},
-                    {"name": "down", "description": "Roll back migrations"},
-                    {"name": "status", "description": "Show migration status"},
-                    {"name": "goto", "description": "Migrate to a specific version"},
-                    {"name": "force", "description": "Force-set the recorded migration version"},
-                    {"name": "repair-dirty", "description": "Repair a known dirty migration metadata state"},
-                    {"name": "validate-upgrade", "description": "Validate baseline-to-candidate migration upgrade path"},
-                    {"name": "lint", "description": "Static analysis for migration files"},
-                    {"name": "test", "description": "Run full-cycle and checkpoint migration tests"},
-                    {"name": "tenant-ensure", "description": "Ensure a tenant schema exists in the database"}
-                ],
-                "flags_passthrough": true
+                "description": "Run and inspect database migrations"
             }
         ],
         "buildHooks": []
     },
+    "downloads": [
+        {
+            "os": "linux",
+            "arch": "amd64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations_linux_amd64.tar.gz"
+        },
+        {
+            "os": "linux",
+            "arch": "arm64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations_linux_arm64.tar.gz"
+        },
+        {
+            "os": "darwin",
+            "arch": "amd64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations_darwin_amd64.tar.gz"
+        },
+        {
+            "os": "darwin",
+            "arch": "arm64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations_darwin_arm64.tar.gz"
+        }
+    ],
     "stepSchemas": [
         {
             "type": "step.migrate_up",
