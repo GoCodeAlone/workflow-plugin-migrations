@@ -51,7 +51,11 @@ jobs:
       - name: Install Syft for SBOM generation
         uses: anchore/sbom-action/download-syft@v0
       - name: Build snapshot release artifacts
-        run: go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --skip=publish
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --snapshot --clean --skip=publish
       - name: Validate packaged plugin artifact
         run: |
           set -euo pipefail
