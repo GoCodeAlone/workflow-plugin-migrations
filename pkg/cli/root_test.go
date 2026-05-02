@@ -2,11 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/GoCodeAlone/workflow-plugin-migrations/pkg/testharness"
 	"github.com/GoCodeAlone/workflow/interfaces"
@@ -358,6 +362,70 @@ func TestForceCommandAcceptsNegativeNilVersionAsArgument(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "invalid target version") {
 		t.Fatalf("Execute() error = %v; -1 should be a valid nil-version target", err)
+	}
+}
+
+// fakeUpDriver is a minimal MigrationDriver stub for CLI flag tests that
+// don't require a real database. It returns a predetermined number of
+// applied migrations from Up() and no-ops for all other operations.
+type fakeUpDriver struct{ appliedCount int }
+
+func (f *fakeUpDriver) Name() string { return "fake" }
+func (f *fakeUpDriver) Up(_ context.Context, _ interfaces.MigrationRequest) (interfaces.MigrationResult, error) {
+	applied := make([]string, f.appliedCount)
+	for i := range applied {
+		applied[i] = fmt.Sprintf("00000%d", i+1)
+	}
+	return interfaces.MigrationResult{Applied: applied}, nil
+}
+func (f *fakeUpDriver) Down(_ context.Context, _ interfaces.MigrationRequest) (interfaces.MigrationResult, error) {
+	return interfaces.MigrationResult{}, nil
+}
+func (f *fakeUpDriver) Status(_ context.Context, _ interfaces.MigrationRequest) (interfaces.MigrationStatus, error) {
+	return interfaces.MigrationStatus{}, nil
+}
+func (f *fakeUpDriver) Goto(_ context.Context, _ interfaces.MigrationRequest, _ string) (interfaces.MigrationResult, error) {
+	return interfaces.MigrationResult{}, nil
+}
+
+func TestUpCmd_AcceptsUpIfCleanFlag(t *testing.T) {
+	cmd := newUpCmd()
+	flag := cmd.Flags().Lookup("up-if-clean")
+	if flag == nil {
+		t.Fatal("up command missing --up-if-clean flag")
+	}
+	if flag.DefValue != "false" {
+		t.Errorf("up-if-clean default: got %q, want false", flag.DefValue)
+	}
+}
+
+func TestUpCmd_UpIfCleanIsNoopWhenAlreadyClean(t *testing.T) {
+	// Override the driver-construction seam so the test doesn't need a real DB.
+	old := buildDriverAndRequestForTest
+	buildDriverAndRequestForTest = func(cmd *cobra.Command) (interfaces.MigrationDriver, interfaces.MigrationRequest, error) {
+		return &fakeUpDriver{appliedCount: 0}, interfaces.MigrationRequest{}, nil
+	}
+	defer func() { buildDriverAndRequestForTest = old }()
+
+	cmd := newUpCmd()
+	cmd.SetArgs([]string{"--up-if-clean", "--source-dir", t.TempDir()})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("up --up-if-clean against clean DB: got error %v, want nil", err)
+	}
+}
+
+func TestUpCmd_UpIfCleanAppliesWhenPendingMigrationsExist(t *testing.T) {
+	// When migrations ARE pending, --up-if-clean should still apply them.
+	old := buildDriverAndRequestForTest
+	buildDriverAndRequestForTest = func(cmd *cobra.Command) (interfaces.MigrationDriver, interfaces.MigrationRequest, error) {
+		return &fakeUpDriver{appliedCount: 2}, interfaces.MigrationRequest{}, nil
+	}
+	defer func() { buildDriverAndRequestForTest = old }()
+
+	cmd := newUpCmd()
+	cmd.SetArgs([]string{"--up-if-clean", "--source-dir", t.TempDir()})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("up --up-if-clean with pending migrations: got error %v, want nil", err)
 	}
 }
 
