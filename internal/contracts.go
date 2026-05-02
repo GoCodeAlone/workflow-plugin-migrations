@@ -40,7 +40,7 @@ func migrationsModuleContract() *dynamic.FieldContract {
 	}
 	c.OptionalInputs["driver_ref"] = dynamic.FieldSpec{
 		Type:        dynamic.FieldTypeString,
-		Description: "Reference to a database.migration_driver module (or literal driver name)",
+		Description: "Literal driver name fallback (module-ref lookup is not yet implemented; treated as a driver name string)",
 	}
 	c.OptionalInputs["dsn_env"] = dynamic.FieldSpec{
 		Type:        dynamic.FieldTypeString,
@@ -49,7 +49,7 @@ func migrationsModuleContract() *dynamic.FieldContract {
 	}
 	c.OptionalInputs["history_table"] = dynamic.FieldSpec{
 		Type:        dynamic.FieldTypeString,
-		Description: "Migration history table name (driver default if empty)",
+		Description: "Migration history table name (reserved for future driver support; currently has no effect at runtime)",
 	}
 	c.OptionalInputs["timeout"] = dynamic.FieldSpec{
 		Type:        dynamic.FieldTypeString,

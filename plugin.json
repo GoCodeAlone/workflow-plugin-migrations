@@ -36,22 +36,22 @@
         {
             "os": "linux",
             "arch": "amd64",
-            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations_linux_amd64.tar.gz"
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-linux-amd64.tar.gz"
         },
         {
             "os": "linux",
             "arch": "arm64",
-            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations_linux_arm64.tar.gz"
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-linux-arm64.tar.gz"
         },
         {
             "os": "darwin",
             "arch": "amd64",
-            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations_darwin_amd64.tar.gz"
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-darwin-amd64.tar.gz"
         },
         {
             "os": "darwin",
             "arch": "arm64",
-            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations_darwin_arm64.tar.gz"
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-darwin-arm64.tar.gz"
         }
     ],
     "stepSchemas": [

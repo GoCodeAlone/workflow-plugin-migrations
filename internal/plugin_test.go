@@ -1,6 +1,8 @@
 package internal_test
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
@@ -230,6 +232,91 @@ func TestPlugin_ContractCoverage(t *testing.T) {
 	for _, stepType := range sp.StepTypes() {
 		if _, ok := stepContracts[stepType]; !ok {
 			t.Errorf("step type %q has no strict contract descriptor", stepType)
+		}
+	}
+}
+
+// TestPlugin_PluginJSONStepSchemasDrift guards against the shipped plugin.json
+// stepSchemas drifting from the Go PluginStepSchemas() definition.
+// It verifies that every step type returned by PluginStepSchemas() is also
+// present in plugin.json, ensuring the hand-maintained JSON stays in sync.
+func TestPlugin_PluginJSONStepSchemasDrift(t *testing.T) {
+	data, err := os.ReadFile("../plugin.json")
+	if err != nil {
+		t.Fatalf("open plugin.json: %v", err)
+	}
+	var manifest struct {
+		StepSchemas []struct {
+			Type string `json:"type"`
+		} `json:"stepSchemas"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("parse plugin.json: %v", err)
+	}
+
+	jsonTypes := make(map[string]bool, len(manifest.StepSchemas))
+	for _, s := range manifest.StepSchemas {
+		jsonTypes[s.Type] = true
+	}
+
+	goSchemas := internal.PluginStepSchemas()
+	for _, s := range goSchemas {
+		if !jsonTypes[s.Type] {
+			t.Errorf("step type %q is in PluginStepSchemas() but missing from plugin.json stepSchemas", s.Type)
+		}
+	}
+	for typ := range jsonTypes {
+		found := false
+		for _, s := range goSchemas {
+			if s.Type == typ {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("step type %q is in plugin.json stepSchemas but missing from PluginStepSchemas()", typ)
+		}
+	}
+}
+
+// TestPlugin_ContractsJSONDrift guards against plugin.contracts.json drifting
+// from the Go contract definitions. It reads the checked-in file and asserts
+// that every advertised module and step type has a strict-mode entry.
+func TestPlugin_ContractsJSONDrift(t *testing.T) {
+	data, err := os.ReadFile("../plugin.contracts.json")
+	if err != nil {
+		t.Fatalf("open plugin.contracts.json: %v", err)
+	}
+	var file struct {
+		Version   string `json:"version"`
+		Contracts []struct {
+			Kind string `json:"kind"`
+			Type string `json:"type"`
+			Mode string `json:"mode"`
+		} `json:"contracts"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatalf("parse plugin.contracts.json: %v", err)
+	}
+
+	strictByKindType := make(map[string]bool)
+	for _, c := range file.Contracts {
+		if c.Mode == "strict" {
+			strictByKindType[c.Kind+"\x00"+c.Type] = true
+		}
+	}
+
+	mp, _ := internal.NewPlugin().(sdk.ModuleProvider)
+	sp, _ := internal.NewPlugin().(sdk.StepProvider)
+
+	for _, modType := range mp.ModuleTypes() {
+		if !strictByKindType["module\x00"+modType] {
+			t.Errorf("module type %q has no strict entry in plugin.contracts.json", modType)
+		}
+	}
+	for _, stepType := range sp.StepTypes() {
+		if !strictByKindType["step\x00"+stepType] {
+			t.Errorf("step type %q has no strict entry in plugin.contracts.json", stepType)
 		}
 	}
 }
