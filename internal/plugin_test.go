@@ -302,7 +302,7 @@ func TestPlugin_ContractsJSONDrift(t *testing.T) {
 	strictByKindType := make(map[string]bool)
 	for _, c := range file.Contracts {
 		if c.Mode == "strict" {
-			strictByKindType[c.Kind+"\x00"+c.Type] = true
+			strictByKindType[c.Kind+":"+c.Type] = true
 		}
 	}
 
@@ -310,12 +310,12 @@ func TestPlugin_ContractsJSONDrift(t *testing.T) {
 	sp, _ := internal.NewPlugin().(sdk.StepProvider)
 
 	for _, modType := range mp.ModuleTypes() {
-		if !strictByKindType["module\x00"+modType] {
+		if !strictByKindType["module:"+modType] {
 			t.Errorf("module type %q has no strict entry in plugin.contracts.json", modType)
 		}
 	}
 	for _, stepType := range sp.StepTypes() {
-		if !strictByKindType["step\x00"+stepType] {
+		if !strictByKindType["step:"+stepType] {
 			t.Errorf("step type %q has no strict entry in plugin.contracts.json", stepType)
 		}
 	}
