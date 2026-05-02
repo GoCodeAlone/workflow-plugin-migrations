@@ -66,6 +66,11 @@ func sharedFlags(cmd *cobra.Command) {
 	_ = cmd.MarkFlagRequired("source-dir")
 }
 
+// buildDriverAndRequestForTest is the package-level seam that lets tests stub
+// out driver construction. Production calls go straight through to
+// buildDriverAndRequest.
+var buildDriverAndRequestForTest = buildDriverAndRequest
+
 // buildDriverAndRequest resolves the driver and constructs a MigrationRequest from flags.
 func buildDriverAndRequest(cmd *cobra.Command) (interfaces.MigrationDriver, interfaces.MigrationRequest, error) {
 	driverName, _ := cmd.Flags().GetString("driver")
@@ -101,8 +106,17 @@ func newUpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Apply all pending migrations",
+		Long: `Apply all pending migrations against the configured database.
+
+When --up-if-clean is set the command is idempotent: if no migrations are
+pending (database already at latest version) the command exits 0 quietly
+with an informative message. Without --up-if-clean the same condition also
+exits 0 (since there is nothing to apply). The flag makes the deploy-script
+intent explicit and, crucially, must be accepted by cobra so deploy CMDs
+that pass it succeed.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			d, req, err := buildDriverAndRequest(cmd)
+			upIfClean, _ := cmd.Flags().GetBool("up-if-clean")
+			d, req, err := buildDriverAndRequestForTest(cmd)
 			if err != nil {
 				return err
 			}
@@ -111,7 +125,11 @@ func newUpCmd() *cobra.Command {
 				return fmt.Errorf("migrate up: %w", err)
 			}
 			if len(result.Applied) == 0 {
-				fmt.Println("No pending migrations.")
+				if upIfClean {
+					fmt.Println("up-if-clean: no pending migrations; database is clean.")
+				} else {
+					fmt.Println("No pending migrations.")
+				}
 				return nil
 			}
 			fmt.Printf("Applied %d migration(s): %v\n", len(result.Applied), result.Applied)
@@ -119,6 +137,7 @@ func newUpCmd() *cobra.Command {
 		},
 	}
 	sharedFlags(cmd)
+	cmd.Flags().Bool("up-if-clean", false, "Idempotent up: exit 0 when no migrations are pending. Required for deploy CMDs that may re-run against an already-current database.")
 	return cmd
 }
 

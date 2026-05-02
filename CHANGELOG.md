@@ -9,9 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `up --up-if-clean` flag: makes the `up` subcommand idempotent in deploy CMDs. Same
+  effect as plain `up` when no migrations are pending (exits 0 with an informative
+  message); the difference is that the flag is now accepted by cobra. Resolves
+  GoCodeAlone/core-dump#150 where deploy CMDs passing `--up-if-clean` to `up` were
+  rejected by cobra in v0.3.6 because the flag was only registered on `repair-dirty`.
 - `workflow-migrate force <version>` for force-setting the recorded golang-migrate version after dirty or manual repair workflows.
 - `workflow-migrate repair-dirty` for guarded dirty migration metadata repair. It requires an exact dirty-version match, an explicit force target, and typed confirmation before metadata is changed, with optional `--then-up` to continue applying pending migrations after repair. `--up-if-clean` makes the command idempotent in deploy configs by running normal `up` when the database is already clean, and implies `--then-up`.
 - `workflow-migrate validate-upgrade` for applying baseline migrations and then candidate migrations against the same database, catching upgrade-path failures that fresh-database migration tests miss.
+
+### Fixed
+
+- Atlas Executor panic recovery: `Up()` and `Status()` in the atlas driver now wrap
+  calls into `ariga.io/atlas/sql/migrate.(*Executor).*` with `defer recover()` so an
+  upstream-library panic (`runtime error: index out of range [0] with length 0` observed
+  in GoCodeAlone/workflow#513) becomes a wrapped error instead of killing the process. The
+  error message includes the phase name (`atlas-execute panic`, `atlas-pending panic`) so
+  callers can identify which atlas operation panicked. Root-cause investigation of the
+  upstream atlas bug is still open; this is the defensive fix.
 
 ## [0.3.1] - 2026-04-24
 

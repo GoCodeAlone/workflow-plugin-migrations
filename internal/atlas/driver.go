@@ -20,6 +20,47 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+// atlasExecutor is the subset of *atlmigrate.Executor methods this driver
+// uses. Defined as an interface so tests can inject a panicking fake to
+// verify the recover wrapper.
+type atlasExecutor interface {
+	ExecuteN(ctx context.Context, n int) error
+	Pending(ctx context.Context) ([]atlmigrate.File, error)
+}
+
+// openForTest is the seam tests use to bypass real DB setup. Production
+// calls go straight through to open().
+var openForTest = func(req interfaces.MigrationRequest) (
+	*sql.DB, *atlmigrate.LocalDir, *sqlRevisionRW, atlmigrate.Driver, func(), error,
+) {
+	return open(req)
+}
+
+// newAtlasExecutorForTest is the seam tests use to inject a fake executor.
+// Production calls go straight through to atlmigrate.NewExecutor.
+var newAtlasExecutorForTest = func(
+	drv atlmigrate.Driver,
+	dir atlmigrate.Dir,
+	rrw atlmigrate.RevisionReadWriter,
+	opts ...atlmigrate.ExecutorOption,
+) (atlasExecutor, error) {
+	return atlmigrate.NewExecutor(drv, dir, rrw, opts...)
+}
+
+// runWithRecover wraps an atlas Executor call and converts panics into wrapped
+// errors. Without this wrapper a malformed migration corpus (workflow#513
+// reports "index out of range [0] with length 0") kills the process; with
+// it the caller gets an error naming the failed phase so it can be surfaced
+// in deploy-time diagnostics and retried.
+func runWithRecover(phase string, fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s panic: %v", phase, r)
+		}
+	}()
+	return fn()
+}
+
 // Driver implements interfaces.MigrationDriver using ariga.io/atlas.
 type Driver struct{}
 
@@ -36,19 +77,21 @@ func (d *Driver) Up(ctx context.Context, req interfaces.MigrationRequest) (inter
 	}
 	start := time.Now()
 
-	db, dir, rrw, drv, cleanup, err := open(req)
+	db, dir, rrw, drv, cleanup, err := openForTest(req)
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
 	defer cleanup()
 	_ = db
 
-	ex, err := atlmigrate.NewExecutor(drv, dir, rrw, atlmigrate.WithAllowDirty(true))
+	ex, err := newAtlasExecutorForTest(drv, dir, rrw, atlmigrate.WithAllowDirty(true))
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("atlas: executor: %w", err)
 	}
 
-	if err := ex.ExecuteN(ctx, 0); err != nil && !errors.Is(err, atlmigrate.ErrNoPendingFiles) {
+	if err := runWithRecover("atlas-execute", func() error {
+		return ex.ExecuteN(ctx, 0)
+	}); err != nil && !errors.Is(err, atlmigrate.ErrNoPendingFiles) {
 		return interfaces.MigrationResult{}, fmt.Errorf("atlas up: %w", err)
 	}
 
@@ -140,22 +183,25 @@ func (d *Driver) Status(ctx context.Context, req interfaces.MigrationRequest) (i
 		return interfaces.MigrationStatus{}, err
 	}
 
-	db, dir, rrw, drv, cleanup, err := open(req)
+	db, dir, rrw, drv, cleanup, err := openForTest(req)
 	if err != nil {
 		return interfaces.MigrationStatus{}, err
 	}
 	defer cleanup()
 	_ = db
-	_ = drv
 
-	ex, err := atlmigrate.NewExecutor(drv, dir, rrw, atlmigrate.WithAllowDirty(true))
+	ex, err := newAtlasExecutorForTest(drv, dir, rrw, atlmigrate.WithAllowDirty(true))
 	if err != nil {
 		return interfaces.MigrationStatus{}, fmt.Errorf("atlas status: executor: %w", err)
 	}
 
-	pending, err := ex.Pending(ctx)
-	if err != nil && !errors.Is(err, atlmigrate.ErrNoPendingFiles) {
-		return interfaces.MigrationStatus{}, fmt.Errorf("atlas status: pending: %w", err)
+	var pending []atlmigrate.File
+	if pendingErr := runWithRecover("atlas-pending", func() error {
+		var e error
+		pending, e = ex.Pending(ctx)
+		return e
+	}); pendingErr != nil && !errors.Is(pendingErr, atlmigrate.ErrNoPendingFiles) {
+		return interfaces.MigrationStatus{}, fmt.Errorf("atlas status: pending: %w", pendingErr)
 	}
 
 	var pendingVersions []string
