@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atlas Executor panic recovery: `Up()` and `Status()` in the atlas driver now wrap
   calls into `ariga.io/atlas/sql/migrate.(*Executor).*` with `defer recover()` so an
   upstream-library panic (`runtime error: index out of range [0] with length 0` observed
-  in GoCodeAlone/workflow#513) becomes a typed error instead of killing the process. The
+  in GoCodeAlone/workflow#513) becomes a wrapped error instead of killing the process. The
   error message includes the phase name (`atlas-execute panic`, `atlas-pending panic`) so
   callers can identify which atlas operation panicked. Root-cause investigation of the
   upstream atlas bug is still open; this is the defensive fix.

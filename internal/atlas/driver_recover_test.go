@@ -15,7 +15,7 @@ import (
 )
 
 // TestRunWithRecover_ConvertsPanicToError verifies that runWithRecover
-// converts a runtime panic (index out-of-range) into a typed error whose
+// converts a runtime panic (index out-of-range) into a wrapped error whose
 // message contains both the phase name and the panic value.
 func TestRunWithRecover_ConvertsPanicToError(t *testing.T) {
 	err := runWithRecover("atlas-test-phase", func() error {
@@ -83,7 +83,7 @@ func TestUp_RecoversAtlasExecutorPanic(t *testing.T) {
 		Source: interfaces.MigrationSource{Dir: "/fake-for-test"},
 	})
 	if err == nil {
-		t.Fatal("Up: expected typed error from recovered atlas panic, got nil")
+		t.Fatal("Up: expected wrapped error from recovered atlas panic, got nil")
 	}
 	if !strings.Contains(err.Error(), "atlas-execute panic") {
 		t.Errorf("Up: error should mention 'atlas-execute panic'; got %v", err)

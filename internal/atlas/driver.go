@@ -47,7 +47,7 @@ var newAtlasExecutorForTest = func(
 	return atlmigrate.NewExecutor(drv, dir, rrw, opts...)
 }
 
-// runWithRecover wraps an atlas Executor call and converts panics into typed
+// runWithRecover wraps an atlas Executor call and converts panics into wrapped
 // errors. Without this wrapper a malformed migration corpus (workflow#513
 // reports "index out of range [0] with length 0") kills the process; with
 // it the caller gets an error naming the failed phase so it can be surfaced
@@ -189,7 +189,6 @@ func (d *Driver) Status(ctx context.Context, req interfaces.MigrationRequest) (i
 	}
 	defer cleanup()
 	_ = db
-	_ = drv
 
 	ex, err := newAtlasExecutorForTest(drv, dir, rrw, atlmigrate.WithAllowDirty(true))
 	if err != nil {
