@@ -27,7 +27,20 @@
         "cliCommands": [
             {
                 "name": "migrate",
-                "description": "Run and inspect database migrations"
+                "description": "Run and inspect database migrations",
+                "subcommands": [
+                    {"name": "up", "description": "Apply all pending migrations"},
+                    {"name": "down", "description": "Roll back migrations"},
+                    {"name": "status", "description": "Show migration status"},
+                    {"name": "goto", "description": "Migrate to a specific version"},
+                    {"name": "force", "description": "Force-set the recorded migration version"},
+                    {"name": "repair-dirty", "description": "Repair a known dirty migration metadata state"},
+                    {"name": "validate-upgrade", "description": "Validate a candidate migration directory against a baseline"},
+                    {"name": "lint", "description": "Static analysis for migration files"},
+                    {"name": "test", "description": "Run full-cycle and checkpoint migration tests"},
+                    {"name": "tenant-ensure", "description": "Ensure a tenant schema exists in the database"}
+                ],
+                "flags_passthrough": true
             }
         ],
         "buildHooks": []
@@ -52,6 +65,16 @@
             "os": "darwin",
             "arch": "arm64",
             "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-darwin-arm64.tar.gz"
+        },
+        {
+            "os": "windows",
+            "arch": "amd64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-windows-amd64.tar.gz"
+        },
+        {
+            "os": "windows",
+            "arch": "arm64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-windows-arm64.tar.gz"
         }
     ],
     "stepSchemas": [

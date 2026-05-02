@@ -3,7 +3,7 @@ version: 2
 before:
   hooks:
     - go mod tidy
-    - "sed -i.bak -e 's/\"version\": \".*\"/\"version\": \"{{ .Version }}\"/' -e 's|/releases/download/v[0-9][^/]*/|/releases/download/{{ .Version }}/|g' plugin.json && rm -f plugin.json.bak"
+    - "sed -i.bak -e 's/\"version\": \".*\"/\"version\": \"{{ .Version }}\"/' -e 's|/releases/download/v[0-9][^/]*/|/releases/download/v{{ .Version }}/|g' plugin.json && rm -f plugin.json.bak"
 
 builds:
   # Main plugin binary: golang-migrate + goose + wfctl CLI
@@ -72,7 +72,6 @@ archives:
     name_template: "workflow-plugin-atlas-migrate-{{ .Os }}-{{ .Arch }}"
     files:
       - plugin.json
-      - plugin.contracts.json
       - LICENSE
 
   - id: workflow-migrate

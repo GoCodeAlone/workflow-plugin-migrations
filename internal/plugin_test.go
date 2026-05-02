@@ -3,9 +3,14 @@ package internal_test
 import (
 	"encoding/json"
 	"os"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	sdk "github.com/GoCodeAlone/workflow/plugin/external/sdk"
+	"github.com/GoCodeAlone/workflow/schema"
+	"gopkg.in/yaml.v3"
 
 	"github.com/GoCodeAlone/workflow-plugin-migrations/internal"
 )
@@ -238,85 +243,228 @@ func TestPlugin_ContractCoverage(t *testing.T) {
 
 // TestPlugin_PluginJSONStepSchemasDrift guards against the shipped plugin.json
 // stepSchemas drifting from the Go PluginStepSchemas() definition.
-// It verifies that every step type returned by PluginStepSchemas() is also
-// present in plugin.json, ensuring the hand-maintained JSON stays in sync.
+// It verifies the full schema payload, not just step type names.
 func TestPlugin_PluginJSONStepSchemasDrift(t *testing.T) {
 	data, err := os.ReadFile("../plugin.json")
 	if err != nil {
 		t.Fatalf("open plugin.json: %v", err)
 	}
 	var manifest struct {
-		StepSchemas []struct {
-			Type string `json:"type"`
-		} `json:"stepSchemas"`
+		StepSchemas []*schema.StepSchema `json:"stepSchemas"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("parse plugin.json: %v", err)
 	}
 
-	jsonTypes := make(map[string]bool, len(manifest.StepSchemas))
-	for _, s := range manifest.StepSchemas {
-		jsonTypes[s.Type] = true
-	}
-
-	goSchemas := internal.PluginStepSchemas()
-	for _, s := range goSchemas {
-		if !jsonTypes[s.Type] {
-			t.Errorf("step type %q is in PluginStepSchemas() but missing from plugin.json stepSchemas", s.Type)
-		}
-	}
-	for typ := range jsonTypes {
-		found := false
-		for _, s := range goSchemas {
-			if s.Type == typ {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("step type %q is in plugin.json stepSchemas but missing from PluginStepSchemas()", typ)
-		}
+	jsonSchemas := canonicalStepSchemas(t, manifest.StepSchemas)
+	goSchemas := canonicalStepSchemas(t, internal.PluginStepSchemas())
+	if !reflect.DeepEqual(jsonSchemas, goSchemas) {
+		t.Fatalf("plugin.json stepSchemas drifted from PluginStepSchemas()\nplugin.json: %#v\nGo: %#v", jsonSchemas, goSchemas)
 	}
 }
 
 // TestPlugin_ContractsJSONDrift guards against plugin.contracts.json drifting
-// from the Go contract definitions. It reads the checked-in file and asserts
-// that every advertised module and step type has a strict-mode entry.
+// from the contract descriptors this plugin publishes for strict validation.
 func TestPlugin_ContractsJSONDrift(t *testing.T) {
 	data, err := os.ReadFile("../plugin.contracts.json")
 	if err != nil {
 		t.Fatalf("open plugin.contracts.json: %v", err)
 	}
 	var file struct {
-		Version   string `json:"version"`
-		Contracts []struct {
-			Kind string `json:"kind"`
-			Type string `json:"type"`
-			Mode string `json:"mode"`
-		} `json:"contracts"`
+		Version   string               `json:"version"`
+		Contracts []contractDescriptor `json:"contracts"`
 	}
 	if err := json.Unmarshal(data, &file); err != nil {
 		t.Fatalf("parse plugin.contracts.json: %v", err)
 	}
 
-	strictByKindType := make(map[string]bool)
-	for _, c := range file.Contracts {
-		if c.Mode == "strict" {
-			strictByKindType[c.Kind+":"+c.Type] = true
+	if file.Version != "1" {
+		t.Fatalf("plugin.contracts.json version = %q; want 1", file.Version)
+	}
+	got := sortedContracts(file.Contracts)
+	want := sortedContracts(expectedContractDescriptors())
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("plugin.contracts.json drifted from expected descriptors\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestPlugin_DownloadsMatchGoReleaserMainArchiveMatrix(t *testing.T) {
+	manifest := readPluginManifest(t)
+	cfg := readGoReleaserConfig(t)
+	build := cfg.findBuild(t, "workflow-plugin-migrations")
+
+	want := make(map[string]string)
+	for _, goos := range build.Goos {
+		for _, goarch := range build.Goarch {
+			key := goos + "/" + goarch
+			want[key] = "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v" +
+				manifest.Version + "/workflow-plugin-migrations-" + goos + "-" + goarch + ".tar.gz"
 		}
 	}
 
-	mp, _ := internal.NewPlugin().(sdk.ModuleProvider)
-	sp, _ := internal.NewPlugin().(sdk.StepProvider)
+	got := make(map[string]string)
+	for _, d := range manifest.Downloads {
+		got[d.OS+"/"+d.Arch] = d.URL
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("plugin.json downloads do not match GoReleaser main archive matrix\ngot: %#v\nwant: %#v", got, want)
+	}
+}
 
-	for _, modType := range mp.ModuleTypes() {
-		if !strictByKindType["module:"+modType] {
-			t.Errorf("module type %q has no strict entry in plugin.contracts.json", modType)
+func TestPlugin_GoReleaserManifestRewriteKeepsTagPrefix(t *testing.T) {
+	cfg := readGoReleaserConfig(t)
+	for _, hook := range cfg.Before.Hooks {
+		if strings.Contains(hook, "/releases/download/") &&
+			strings.Contains(hook, "/releases/download/v{{ .Version }}/") {
+			return
 		}
 	}
-	for _, stepType := range sp.StepTypes() {
-		if !strictByKindType["step:"+stepType] {
-			t.Errorf("step type %q has no strict entry in plugin.contracts.json", stepType)
+	t.Fatalf("GoReleaser before hook must rewrite download URLs with the v tag prefix")
+}
+
+func TestPlugin_GoReleaserArchivesPackageContractsOnlyForMainPlugin(t *testing.T) {
+	cfg := readGoReleaserConfig(t)
+
+	mainArchive := cfg.findArchive(t, "workflow-plugin-migrations")
+	if !mainArchive.hasFile("plugin.json") {
+		t.Fatal("workflow-plugin-migrations archive does not package plugin.json")
+	}
+	if !mainArchive.hasFile("plugin.contracts.json") {
+		t.Fatal("workflow-plugin-migrations archive does not package plugin.contracts.json")
+	}
+
+	atlasArchive := cfg.findArchive(t, "workflow-plugin-atlas-migrate")
+	if atlasArchive.hasFile("plugin.contracts.json") {
+		t.Fatal("workflow-plugin-atlas-migrate archive must not package main plugin.contracts.json")
+	}
+}
+
+type contractDescriptor struct {
+	Kind   string `json:"kind"`
+	Type   string `json:"type"`
+	Mode   string `json:"mode"`
+	Config string `json:"config,omitempty"`
+	Input  string `json:"input,omitempty"`
+	Output string `json:"output,omitempty"`
+}
+
+func expectedContractDescriptors() []contractDescriptor {
+	return []contractDescriptor{
+		{Kind: "module", Type: "database.migrations", Mode: "strict", Config: "workflow.plugins.migrations.MigrationsModuleConfig"},
+		{Kind: "module", Type: "database.migration_driver", Mode: "strict", Config: "workflow.plugins.migrations.MigrationDriverConfig"},
+		{Kind: "step", Type: "step.migrate_up", Mode: "strict", Input: "workflow.plugins.migrations.MigrateUpInput", Output: "workflow.plugins.migrations.MigrateUpOutput"},
+		{Kind: "step", Type: "step.migrate_down", Mode: "strict", Input: "workflow.plugins.migrations.MigrateDownInput", Output: "workflow.plugins.migrations.MigrateDownOutput"},
+		{Kind: "step", Type: "step.migrate_status", Mode: "strict", Input: "workflow.plugins.migrations.MigrateStatusInput", Output: "workflow.plugins.migrations.MigrateStatusOutput"},
+		{Kind: "step", Type: "step.migrate_to", Mode: "strict", Input: "workflow.plugins.migrations.MigrateToInput", Output: "workflow.plugins.migrations.MigrateToOutput"},
+	}
+}
+
+func sortedContracts(in []contractDescriptor) []contractDescriptor {
+	out := append([]contractDescriptor(nil), in...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Kind+":"+out[i].Type < out[j].Kind+":"+out[j].Type
+	})
+	return out
+}
+
+func canonicalStepSchemas(t *testing.T, schemas []*schema.StepSchema) map[string]any {
+	t.Helper()
+	out := make(map[string]any, len(schemas))
+	for _, s := range schemas {
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("marshal step schema %q: %v", s.Type, err)
+		}
+		var v any
+		if err := json.Unmarshal(data, &v); err != nil {
+			t.Fatalf("canonicalize step schema %q: %v", s.Type, err)
+		}
+		out[s.Type] = v
+	}
+	return out
+}
+
+type pluginManifestFile struct {
+	Version   string `json:"version"`
+	Downloads []struct {
+		OS   string `json:"os"`
+		Arch string `json:"arch"`
+		URL  string `json:"url"`
+	} `json:"downloads"`
+}
+
+func readPluginManifest(t *testing.T) pluginManifestFile {
+	t.Helper()
+	data, err := os.ReadFile("../plugin.json")
+	if err != nil {
+		t.Fatalf("open plugin.json: %v", err)
+	}
+	var manifest pluginManifestFile
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("parse plugin.json: %v", err)
+	}
+	return manifest
+}
+
+type goReleaserConfig struct {
+	Before struct {
+		Hooks []string `yaml:"hooks"`
+	} `yaml:"before"`
+	Builds   []goReleaserBuild   `yaml:"builds"`
+	Archives []goReleaserArchive `yaml:"archives"`
+}
+
+type goReleaserBuild struct {
+	ID     string   `yaml:"id"`
+	Goos   []string `yaml:"goos"`
+	Goarch []string `yaml:"goarch"`
+}
+
+type goReleaserArchive struct {
+	ID    string   `yaml:"id"`
+	Files []string `yaml:"files"`
+}
+
+func readGoReleaserConfig(t *testing.T) goReleaserConfig {
+	t.Helper()
+	data, err := os.ReadFile("../.goreleaser.yaml")
+	if err != nil {
+		t.Fatalf("open .goreleaser.yaml: %v", err)
+	}
+	var cfg goReleaserConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse .goreleaser.yaml: %v", err)
+	}
+	return cfg
+}
+
+func (cfg goReleaserConfig) findBuild(t *testing.T, id string) goReleaserBuild {
+	t.Helper()
+	for _, build := range cfg.Builds {
+		if build.ID == id {
+			return build
 		}
 	}
+	t.Fatalf("missing GoReleaser build %q", id)
+	return goReleaserBuild{}
+}
+
+func (cfg goReleaserConfig) findArchive(t *testing.T, id string) goReleaserArchive {
+	t.Helper()
+	for _, archive := range cfg.Archives {
+		if archive.ID == id {
+			return archive
+		}
+	}
+	t.Fatalf("missing GoReleaser archive %q", id)
+	return goReleaserArchive{}
+}
+
+func (a goReleaserArchive) hasFile(name string) bool {
+	for _, file := range a.Files {
+		if file == name {
+			return true
+		}
+	}
+	return false
 }

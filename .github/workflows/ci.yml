@@ -48,3 +48,25 @@ jobs:
           go-version-file: go.mod
       - name: Validate strict plugin contracts
         run: go run github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1 plugin validate --file plugin.json --strict-contracts
+      - name: Install Syft for SBOM generation
+        uses: anchore/sbom-action/download-syft@v0
+      - name: Build snapshot release artifacts
+        run: go run github.com/goreleaser/goreleaser/v2@v2.15.4 release --snapshot --clean --skip=publish
+      - name: Validate packaged plugin artifact
+        run: |
+          set -euo pipefail
+          main_archive="$(find dist -name 'workflow-plugin-migrations-linux-amd64.tar.gz' -print -quit)"
+          test -n "$main_archive"
+          tmp="$(mktemp -d)"
+          tar -xzf "$main_archive" -C "$tmp"
+          test -f "$tmp/plugin.json"
+          test -f "$tmp/plugin.contracts.json"
+          grep -q '/releases/download/v' "$tmp/plugin.json"
+          go run github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1 plugin validate --file "$tmp/plugin.json" --strict-contracts
+
+          atlas_archive="$(find dist -name 'workflow-plugin-atlas-migrate-linux-amd64.tar.gz' -print -quit)"
+          test -n "$atlas_archive"
+          if tar -tzf "$atlas_archive" | grep -Eq '(^|/)plugin\.contracts\.json$'; then
+            echo "workflow-plugin-atlas-migrate archive must not contain main plugin.contracts.json" >&2
+            exit 1
+          fi

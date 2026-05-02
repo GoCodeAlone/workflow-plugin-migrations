@@ -259,9 +259,9 @@ func PluginModuleSchemas() []sdk.ModuleSchemaData {
 			ConfigFields: []sdk.ConfigField{
 				{Name: "source_dir", Type: "string", Description: "Directory containing migration files", Required: true},
 				{Name: "driver", Type: "string", Description: "Migration driver: golang-migrate (default) or goose", DefaultValue: "golang-migrate"},
-				{Name: "driver_ref", Type: "string", Description: "Reference to a database.migration_driver module (or literal driver name)"},
+				{Name: "driver_ref", Type: "string", Description: "Literal driver name fallback for golang-migrate or goose; module-reference lookup is not implemented"},
 				{Name: "dsn_env", Type: "string", Description: "Environment variable name holding the database DSN", DefaultValue: "DATABASE_URL"},
-				{Name: "history_table", Type: "string", Description: "Migration history table name (driver default if empty)"},
+				{Name: "history_table", Type: "string", Description: "Reserved for future driver support; currently has no runtime effect"},
 				{Name: "timeout", Type: "string", Description: "Operation timeout as a Go duration string (e.g. 5m)", DefaultValue: "5m"},
 			},
 			Outputs: []sdk.ServiceIO{
@@ -277,7 +277,7 @@ func PluginModuleSchemas() []sdk.ModuleSchemaData {
 			Type:        "database.migration_driver",
 			Label:       "Migration Driver",
 			Category:    "database",
-			Description: "Declares a named migration driver (golang-migrate, goose, or atlas) for reference by database.migrations modules.",
+			Description: "Declares standalone migration driver metadata. database.migrations does not resolve module references yet.",
 			ConfigFields: []sdk.ConfigField{
 				{Name: "driver", Type: "string", Description: "Driver name: golang-migrate, goose, or atlas", Required: true, Options: []string{"golang-migrate", "goose", "atlas"}},
 			},
