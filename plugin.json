@@ -1,12 +1,11 @@
 {
     "name": "workflow-plugin-migrations",
-    "version": "0.0.0",
+    "version": "0.3.6",
     "description": "Database migration plugin for the workflow engine: golang-migrate + goose + atlas drivers, pre-deploy runner, wfctl migrate CLI, static lint tool",
     "author": "GoCodeAlone",
     "license": "Apache-2.0",
     "type": "external",
     "tier": "community",
-    "private": false,
     "minEngineVersion": "0.18.0",
     "keywords": ["migrations", "database", "postgres", "golang-migrate", "goose", "atlas"],
     "homepage": "https://github.com/GoCodeAlone/workflow-plugin-migrations",
@@ -36,7 +35,7 @@
                     {"name": "goto", "description": "Migrate to a specific version"},
                     {"name": "force", "description": "Force-set the recorded migration version"},
                     {"name": "repair-dirty", "description": "Repair a known dirty migration metadata state"},
-                    {"name": "validate-upgrade", "description": "Validate baseline-to-candidate migration upgrade path"},
+                    {"name": "validate-upgrade", "description": "Validate a candidate migration directory against a baseline"},
                     {"name": "lint", "description": "Static analysis for migration files"},
                     {"name": "test", "description": "Run full-cycle and checkpoint migration tests"},
                     {"name": "tenant-ensure", "description": "Ensure a tenant schema exists in the database"}
@@ -45,5 +44,109 @@
             }
         ],
         "buildHooks": []
-    }
+    },
+    "downloads": [
+        {
+            "os": "linux",
+            "arch": "amd64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-linux-amd64.tar.gz"
+        },
+        {
+            "os": "linux",
+            "arch": "arm64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-linux-arm64.tar.gz"
+        },
+        {
+            "os": "darwin",
+            "arch": "amd64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-darwin-amd64.tar.gz"
+        },
+        {
+            "os": "darwin",
+            "arch": "arm64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-darwin-arm64.tar.gz"
+        },
+        {
+            "os": "windows",
+            "arch": "amd64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-windows-amd64.tar.gz"
+        },
+        {
+            "os": "windows",
+            "arch": "arm64",
+            "url": "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v0.3.6/workflow-plugin-migrations-windows-arm64.tar.gz"
+        }
+    ],
+    "stepSchemas": [
+        {
+            "type": "step.migrate_up",
+            "plugin": "workflow-plugin-migrations",
+            "description": "Applies all pending database migrations (up direction).",
+            "configFields": [
+                {"key": "source_dir", "label": "Source Directory", "type": "string", "description": "Directory containing migration files", "required": true},
+                {"key": "driver", "label": "Driver", "type": "select", "description": "Migration driver to use", "options": ["golang-migrate", "goose"], "defaultValue": "golang-migrate"},
+                {"key": "dsn_env", "label": "DSN Env Var", "type": "string", "description": "Environment variable name holding the database DSN", "defaultValue": "DATABASE_URL"},
+                {"key": "dsn", "label": "DSN", "type": "string", "description": "Literal database DSN (overrides dsn_env)", "sensitive": true},
+                {"key": "timeout", "label": "Timeout", "type": "duration", "description": "Operation timeout (e.g. 5m)", "defaultValue": "5m"}
+            ],
+            "outputs": [
+                {"key": "applied", "type": "int", "description": "Number of migrations applied"},
+                {"key": "skipped", "type": "int", "description": "Number of migrations skipped (already applied)"},
+                {"key": "duration_ms", "type": "int", "description": "Total execution time in milliseconds"}
+            ]
+        },
+        {
+            "type": "step.migrate_down",
+            "plugin": "workflow-plugin-migrations",
+            "description": "Rolls back N database migrations (down direction).",
+            "configFields": [
+                {"key": "source_dir", "label": "Source Directory", "type": "string", "description": "Directory containing migration files", "required": true},
+                {"key": "driver", "label": "Driver", "type": "select", "description": "Migration driver to use", "options": ["golang-migrate", "goose"], "defaultValue": "golang-migrate"},
+                {"key": "dsn_env", "label": "DSN Env Var", "type": "string", "description": "Environment variable name holding the database DSN", "defaultValue": "DATABASE_URL"},
+                {"key": "dsn", "label": "DSN", "type": "string", "description": "Literal database DSN (overrides dsn_env)", "sensitive": true},
+                {"key": "timeout", "label": "Timeout", "type": "duration", "description": "Operation timeout (e.g. 5m)", "defaultValue": "5m"},
+                {"key": "steps", "label": "Steps", "type": "number", "description": "Number of migrations to roll back", "defaultValue": 1}
+            ],
+            "outputs": [
+                {"key": "applied", "type": "int", "description": "Number of migrations rolled back"},
+                {"key": "skipped", "type": "int", "description": "Number of migrations skipped"},
+                {"key": "duration_ms", "type": "int", "description": "Total execution time in milliseconds"}
+            ]
+        },
+        {
+            "type": "step.migrate_status",
+            "plugin": "workflow-plugin-migrations",
+            "description": "Returns the current database migration status (current version, pending count, dirty flag).",
+            "configFields": [
+                {"key": "source_dir", "label": "Source Directory", "type": "string", "description": "Directory containing migration files", "required": true},
+                {"key": "driver", "label": "Driver", "type": "select", "description": "Migration driver to use", "options": ["golang-migrate", "goose"], "defaultValue": "golang-migrate"},
+                {"key": "dsn_env", "label": "DSN Env Var", "type": "string", "description": "Environment variable name holding the database DSN", "defaultValue": "DATABASE_URL"},
+                {"key": "dsn", "label": "DSN", "type": "string", "description": "Literal database DSN (overrides dsn_env)", "sensitive": true},
+                {"key": "timeout", "label": "Timeout", "type": "duration", "description": "Operation timeout (e.g. 5m)", "defaultValue": "5m"}
+            ],
+            "outputs": [
+                {"key": "current", "type": "string", "description": "Current applied migration version"},
+                {"key": "pending", "type": "int", "description": "Number of pending (unapplied) migrations"},
+                {"key": "dirty", "type": "bool", "description": "Whether the database is in a dirty migration state"}
+            ]
+        },
+        {
+            "type": "step.migrate_to",
+            "plugin": "workflow-plugin-migrations",
+            "description": "Migrates the database to a specific version (up or down as needed).",
+            "configFields": [
+                {"key": "source_dir", "label": "Source Directory", "type": "string", "description": "Directory containing migration files", "required": true},
+                {"key": "target", "label": "Target Version", "type": "string", "description": "Target migration version to migrate to", "required": true},
+                {"key": "driver", "label": "Driver", "type": "select", "description": "Migration driver to use", "options": ["golang-migrate", "goose"], "defaultValue": "golang-migrate"},
+                {"key": "dsn_env", "label": "DSN Env Var", "type": "string", "description": "Environment variable name holding the database DSN", "defaultValue": "DATABASE_URL"},
+                {"key": "dsn", "label": "DSN", "type": "string", "description": "Literal database DSN (overrides dsn_env)", "sensitive": true},
+                {"key": "timeout", "label": "Timeout", "type": "duration", "description": "Operation timeout (e.g. 5m)", "defaultValue": "5m"}
+            ],
+            "outputs": [
+                {"key": "applied", "type": "int", "description": "Number of migrations applied or rolled back to reach the target"},
+                {"key": "skipped", "type": "int", "description": "Number of migrations skipped"},
+                {"key": "duration_ms", "type": "int", "description": "Total execution time in milliseconds"}
+            ]
+        }
+    ]
 }

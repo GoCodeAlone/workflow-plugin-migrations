@@ -1,0 +1,45 @@
+{
+    "version": "1",
+    "contracts": [
+        {
+            "kind": "module",
+            "type": "database.migrations",
+            "mode": "strict",
+            "config": "workflow.plugins.migrations.MigrationsModuleConfig"
+        },
+        {
+            "kind": "module",
+            "type": "database.migration_driver",
+            "mode": "strict",
+            "config": "workflow.plugins.migrations.MigrationDriverConfig"
+        },
+        {
+            "kind": "step",
+            "type": "step.migrate_up",
+            "mode": "strict",
+            "input": "workflow.plugins.migrations.MigrateUpInput",
+            "output": "workflow.plugins.migrations.MigrateUpOutput"
+        },
+        {
+            "kind": "step",
+            "type": "step.migrate_down",
+            "mode": "strict",
+            "input": "workflow.plugins.migrations.MigrateDownInput",
+            "output": "workflow.plugins.migrations.MigrateDownOutput"
+        },
+        {
+            "kind": "step",
+            "type": "step.migrate_status",
+            "mode": "strict",
+            "input": "workflow.plugins.migrations.MigrateStatusInput",
+            "output": "workflow.plugins.migrations.MigrateStatusOutput"
+        },
+        {
+            "kind": "step",
+            "type": "step.migrate_to",
+            "mode": "strict",
+            "input": "workflow.plugins.migrations.MigrateToInput",
+            "output": "workflow.plugins.migrations.MigrateToOutput"
+        }
+    ]
+}

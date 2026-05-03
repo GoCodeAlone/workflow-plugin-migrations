@@ -35,3 +35,69 @@ jobs:
       - run: go build ./...
       - run: go test ./... -v -race -count=1
       - run: go vet ./...
+
+  strict-contracts:
+    name: Validate strict plugin contracts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Validate strict plugin contracts
+        run: go run github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1 plugin validate --file plugin.json --strict-contracts
+      - name: Build plugin binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          go build -o dist/workflow-plugin-migrations ./cmd/workflow-plugin-migrations
+          go build -o dist/workflow-plugin-atlas-migrate ./cmd/workflow-plugin-atlas-migrate
+      - name: Build packaged plugin artifacts
+        run: |
+          set -euo pipefail
+
+          main_package="$(mktemp -d)"
+          cp plugin.json plugin.contracts.json LICENSE "$main_package"
+          cp dist/workflow-plugin-migrations "$main_package/"
+          sed -i.bak \
+            -e 's/"version": ".*"/"version": "0.3.6-SNAPSHOT-ci"/' \
+            -e 's|/releases/download/v[0-9][^/]*/|/releases/download/v0.3.6-SNAPSHOT-ci/|g' \
+            "$main_package/plugin.json"
+          rm -f "$main_package/plugin.json.bak"
+          tar -C "$main_package" -czf dist/workflow-plugin-migrations-linux-amd64.tar.gz workflow-plugin-migrations plugin.json plugin.contracts.json LICENSE
+
+          atlas_package="$(mktemp -d)"
+          cp plugin.atlas.json "$atlas_package/plugin.json"
+          cp plugin.atlas.contracts.json "$atlas_package/plugin.contracts.json"
+          cp dist/workflow-plugin-atlas-migrate "$atlas_package/"
+          cp LICENSE "$atlas_package"
+          sed -i.bak \
+            -e 's/"version": ".*"/"version": "0.3.6-SNAPSHOT-ci"/' \
+            -e 's|/releases/download/v[0-9][^/]*/|/releases/download/v0.3.6-SNAPSHOT-ci/|g' \
+            "$atlas_package/plugin.json"
+          rm -f "$atlas_package/plugin.json.bak"
+          tar -C "$atlas_package" -czf dist/workflow-plugin-atlas-migrate-linux-amd64.tar.gz workflow-plugin-atlas-migrate plugin.json plugin.contracts.json LICENSE
+      - name: Validate packaged plugin artifact
+        run: |
+          set -euo pipefail
+          main_archive="$(find dist -name 'workflow-plugin-migrations-linux-amd64.tar.gz' -print -quit)"
+          test -n "$main_archive"
+          tmp="$(mktemp -d)"
+          tar -xzf "$main_archive" -C "$tmp"
+          test -f "$tmp/workflow-plugin-migrations"
+          test -f "$tmp/plugin.json"
+          test -f "$tmp/plugin.contracts.json"
+          grep -q '/releases/download/v0.3.6-SNAPSHOT-ci/' "$tmp/plugin.json"
+          go run github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1 plugin validate --file "$tmp/plugin.json" --strict-contracts
+
+          atlas_archive="$(find dist -name 'workflow-plugin-atlas-migrate-linux-amd64.tar.gz' -print -quit)"
+          test -n "$atlas_archive"
+          atlas_tmp="$(mktemp -d)"
+          tar -xzf "$atlas_archive" -C "$atlas_tmp"
+          test -f "$atlas_tmp/workflow-plugin-atlas-migrate"
+          test -f "$atlas_tmp/plugin.json"
+          test -f "$atlas_tmp/plugin.contracts.json"
+          grep -q '/releases/download/v0.3.6-SNAPSHOT-ci/' "$atlas_tmp/plugin.json"
+          go run github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1 plugin validate --file "$atlas_tmp/plugin.json" --strict-contracts

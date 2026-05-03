@@ -1,0 +1,17 @@
+{
+    "version": "1",
+    "contracts": [
+        {
+            "kind": "module",
+            "type": "database.migrations",
+            "mode": "strict",
+            "config": "workflow.plugins.migrations.MigrationsModuleConfig"
+        },
+        {
+            "kind": "module",
+            "type": "database.migration_driver",
+            "mode": "strict",
+            "config": "workflow.plugins.migrations.MigrationDriverConfig"
+        }
+    ]
+}
