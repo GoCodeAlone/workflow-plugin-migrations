@@ -63,8 +63,15 @@ jobs:
           tar -C "$main_package" -czf dist/workflow-plugin-migrations-linux-amd64.tar.gz plugin.json plugin.contracts.json LICENSE
 
           atlas_package="$(mktemp -d)"
-          cp plugin.json LICENSE "$atlas_package"
-          tar -C "$atlas_package" -czf dist/workflow-plugin-atlas-migrate-linux-amd64.tar.gz plugin.json LICENSE
+          cp plugin.atlas.json "$atlas_package/plugin.json"
+          cp plugin.atlas.contracts.json "$atlas_package/plugin.contracts.json"
+          cp LICENSE "$atlas_package"
+          sed -i.bak \
+            -e 's/"version": ".*"/"version": "0.3.6-SNAPSHOT-ci"/' \
+            -e 's|/releases/download/v[0-9][^/]*/|/releases/download/v0.3.6-SNAPSHOT-ci/|g' \
+            "$atlas_package/plugin.json"
+          rm -f "$atlas_package/plugin.json.bak"
+          tar -C "$atlas_package" -czf dist/workflow-plugin-atlas-migrate-linux-amd64.tar.gz plugin.json plugin.contracts.json LICENSE
       - name: Validate packaged plugin artifact
         run: |
           set -euo pipefail
@@ -74,12 +81,14 @@ jobs:
           tar -xzf "$main_archive" -C "$tmp"
           test -f "$tmp/plugin.json"
           test -f "$tmp/plugin.contracts.json"
-          grep -q '/releases/download/v' "$tmp/plugin.json"
+          grep -q '/releases/download/v0.3.6-SNAPSHOT-ci/' "$tmp/plugin.json"
           go run github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1 plugin validate --file "$tmp/plugin.json" --strict-contracts
 
           atlas_archive="$(find dist -name 'workflow-plugin-atlas-migrate-linux-amd64.tar.gz' -print -quit)"
           test -n "$atlas_archive"
-          if tar -tzf "$atlas_archive" | grep -Eq '(^|/)plugin\.contracts\.json$'; then
-            echo "workflow-plugin-atlas-migrate archive must not contain main plugin.contracts.json" >&2
-            exit 1
-          fi
+          atlas_tmp="$(mktemp -d)"
+          tar -xzf "$atlas_archive" -C "$atlas_tmp"
+          test -f "$atlas_tmp/plugin.json"
+          test -f "$atlas_tmp/plugin.contracts.json"
+          grep -q '/releases/download/v0.3.6-SNAPSHOT-ci/' "$atlas_tmp/plugin.json"
+          go run github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1 plugin validate --file "$atlas_tmp/plugin.json" --strict-contracts

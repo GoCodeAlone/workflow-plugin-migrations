@@ -16,8 +16,9 @@ import (
 // Version is set at build time via -ldflags.
 var Version = "0.0.0"
 
-// MigrationsPlugin implements sdk.PluginProvider, sdk.ModuleProvider, sdk.StepProvider,
-// sdk.SchemaProvider, and ContractProvider.
+// MigrationsPlugin implements sdk.PluginProvider, sdk.ModuleProvider,
+// sdk.StepProvider, sdk.SchemaProvider, and the strict ModuleContracts/
+// StepContracts methods consumed by Workflow contract tooling.
 type MigrationsPlugin struct{}
 
 // NewPlugin returns a new plugin instance.

@@ -82,7 +82,7 @@ func (m *atlasMigrationsModule) InvokeMethod(method string, args map[string]any)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"applied": result.Applied, "duration_ms": result.DurationMs}, nil
+		return map[string]any{"applied": result.Applied, "skipped": result.Skipped, "duration_ms": result.DurationMs}, nil
 	case "down":
 		steps := 1
 		if v, ok := args["steps"].(int); ok {
@@ -93,7 +93,7 @@ func (m *atlasMigrationsModule) InvokeMethod(method string, args map[string]any)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"applied": result.Applied, "duration_ms": result.DurationMs}, nil
+		return map[string]any{"applied": result.Applied, "skipped": result.Skipped, "duration_ms": result.DurationMs}, nil
 	case "status":
 		st, err := d.Status(ctx, req)
 		if err != nil {
@@ -109,7 +109,7 @@ func (m *atlasMigrationsModule) InvokeMethod(method string, args map[string]any)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"applied": result.Applied, "duration_ms": result.DurationMs}, nil
+		return map[string]any{"applied": result.Applied, "skipped": result.Skipped, "duration_ms": result.DurationMs}, nil
 	default:
 		return nil, fmt.Errorf("database.migrations %q: unknown method %q", m.name, method)
 	}
@@ -125,7 +125,7 @@ func (m *driverModule) Start(_ context.Context) error { return nil }
 func (m *driverModule) Stop(_ context.Context) error  { return nil }
 func (m *driverModule) InvokeMethod(method string, _ map[string]any) (map[string]any, error) {
 	if method == "driver_name" {
-		return map[string]any{"name": m.driver.Name()}, nil
+		return map[string]any{"driver": m.driver.Name()}, nil
 	}
 	return nil, fmt.Errorf("database.migration_driver: unknown method %q", method)
 }

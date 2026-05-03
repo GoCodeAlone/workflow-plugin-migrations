@@ -3,6 +3,7 @@ package internal_test
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"reflect"
 	"sort"
 	"strings"
@@ -143,8 +144,8 @@ func TestPlugin_SchemaProvider(t *testing.T) {
 	}
 }
 
-// TestPlugin_ModuleContracts verifies that each advertised module type has a strict
-// field contract descriptor with at least one required input.
+// TestPlugin_ModuleContracts verifies that each advertised module type has a
+// strict field contract descriptor with at least one declared input.
 func TestPlugin_ModuleContracts(t *testing.T) {
 	p := internal.NewPlugin().(*internal.MigrationsPlugin)
 	contracts := p.ModuleContracts()
@@ -282,9 +283,32 @@ func TestPlugin_ContractsJSONDrift(t *testing.T) {
 		t.Fatalf("plugin.contracts.json version = %q; want 1", file.Version)
 	}
 	got := sortedContracts(file.Contracts)
-	want := sortedContracts(expectedContractDescriptors())
+	want := sortedContracts(expectedContractDescriptors(t))
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("plugin.contracts.json drifted from expected descriptors\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestPlugin_AtlasContractsJSONDrift(t *testing.T) {
+	data, err := os.ReadFile("../plugin.atlas.contracts.json")
+	if err != nil {
+		t.Fatalf("open plugin.atlas.contracts.json: %v", err)
+	}
+	var file struct {
+		Version   string               `json:"version"`
+		Contracts []contractDescriptor `json:"contracts"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatalf("parse plugin.atlas.contracts.json: %v", err)
+	}
+	if file.Version != "1" {
+		t.Fatalf("plugin.atlas.contracts.json version = %q; want 1", file.Version)
+	}
+
+	want := moduleOnlyContractDescriptors(t)
+	got := sortedContracts(file.Contracts)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("plugin.atlas.contracts.json drifted from expected descriptors\ngot: %#v\nwant: %#v", got, want)
 	}
 }
 
@@ -311,31 +335,71 @@ func TestPlugin_DownloadsMatchGoReleaserMainArchiveMatrix(t *testing.T) {
 	}
 }
 
-func TestPlugin_GoReleaserManifestRewriteKeepsTagPrefix(t *testing.T) {
+func TestPlugin_GoReleaserManifestRewriteUpdatesDownloadURLs(t *testing.T) {
 	cfg := readGoReleaserConfig(t)
-	for _, hook := range cfg.Before.Hooks {
-		if strings.Contains(hook, "/releases/download/") &&
-			strings.Contains(hook, "/releases/download/v{{ .Version }}/") {
-			return
+	hook := ""
+	for _, candidate := range cfg.Before.Hooks {
+		if strings.Contains(candidate, "/releases/download/") &&
+			strings.Contains(candidate, "/releases/download/v{{ .Version }}/") {
+			hook = candidate
+			break
 		}
 	}
-	t.Fatalf("GoReleaser before hook must rewrite download URLs with the v tag prefix")
+	if hook == "" {
+		t.Fatalf("GoReleaser before hook must rewrite download URLs with the v tag prefix")
+	}
+
+	tmp := t.TempDir()
+	for _, name := range []string{"plugin.json", "plugin.atlas.json"} {
+		data, err := os.ReadFile("../" + name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(tmp+"/"+name, data, 0o644); err != nil {
+			t.Fatalf("write temp %s: %v", name, err)
+		}
+	}
+
+	const snapshotVersion = "0.3.6-SNAPSHOT-test"
+	cmd := exec.Command("sh", "-c", strings.ReplaceAll(hook, "{{ .Version }}", snapshotVersion))
+	cmd.Dir = tmp
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run GoReleaser manifest rewrite hook: %v\n%s", err, out)
+	}
+
+	for _, name := range []string{"plugin.json", "plugin.atlas.json"} {
+		manifest := readPluginManifestAtPath(t, tmp+"/"+name)
+		if manifest.Version != snapshotVersion {
+			t.Fatalf("%s version = %q; want %q", name, manifest.Version, snapshotVersion)
+		}
+		for _, d := range manifest.Downloads {
+			if !strings.Contains(d.URL, "/releases/download/v"+snapshotVersion+"/") {
+				t.Fatalf("%s download URL was not rewritten to snapshot version: %s", name, d.URL)
+			}
+		}
+	}
 }
 
-func TestPlugin_GoReleaserArchivesPackageContractsOnlyForMainPlugin(t *testing.T) {
+func TestPlugin_GoReleaserArchivesPackageCorrectManifestsAndContracts(t *testing.T) {
 	cfg := readGoReleaserConfig(t)
 
 	mainArchive := cfg.findArchive(t, "workflow-plugin-migrations")
-	if !mainArchive.hasFile("plugin.json") {
+	if !mainArchive.hasFile("plugin.json", "plugin.json") {
 		t.Fatal("workflow-plugin-migrations archive does not package plugin.json")
 	}
-	if !mainArchive.hasFile("plugin.contracts.json") {
+	if !mainArchive.hasFile("plugin.contracts.json", "plugin.contracts.json") {
 		t.Fatal("workflow-plugin-migrations archive does not package plugin.contracts.json")
 	}
 
 	atlasArchive := cfg.findArchive(t, "workflow-plugin-atlas-migrate")
-	if atlasArchive.hasFile("plugin.contracts.json") {
-		t.Fatal("workflow-plugin-atlas-migrate archive must not package main plugin.contracts.json")
+	if !atlasArchive.hasFile("plugin.atlas.json", "plugin.json") {
+		t.Fatal("workflow-plugin-atlas-migrate archive does not package plugin.atlas.json as plugin.json")
+	}
+	if !atlasArchive.hasFile("plugin.atlas.contracts.json", "plugin.contracts.json") {
+		t.Fatal("workflow-plugin-atlas-migrate archive does not package plugin.atlas.contracts.json as plugin.contracts.json")
+	}
+	if atlasArchive.hasFile("plugin.json", "plugin.json") || atlasArchive.hasFile("plugin.contracts.json", "plugin.contracts.json") {
+		t.Fatal("workflow-plugin-atlas-migrate archive must not package the main plugin manifest or contracts")
 	}
 }
 
@@ -348,15 +412,52 @@ type contractDescriptor struct {
 	Output string `json:"output,omitempty"`
 }
 
-func expectedContractDescriptors() []contractDescriptor {
-	return []contractDescriptor{
-		{Kind: "module", Type: "database.migrations", Mode: "strict", Config: "workflow.plugins.migrations.MigrationsModuleConfig"},
-		{Kind: "module", Type: "database.migration_driver", Mode: "strict", Config: "workflow.plugins.migrations.MigrationDriverConfig"},
-		{Kind: "step", Type: "step.migrate_up", Mode: "strict", Input: "workflow.plugins.migrations.MigrateUpInput", Output: "workflow.plugins.migrations.MigrateUpOutput"},
-		{Kind: "step", Type: "step.migrate_down", Mode: "strict", Input: "workflow.plugins.migrations.MigrateDownInput", Output: "workflow.plugins.migrations.MigrateDownOutput"},
-		{Kind: "step", Type: "step.migrate_status", Mode: "strict", Input: "workflow.plugins.migrations.MigrateStatusInput", Output: "workflow.plugins.migrations.MigrateStatusOutput"},
-		{Kind: "step", Type: "step.migrate_to", Mode: "strict", Input: "workflow.plugins.migrations.MigrateToInput", Output: "workflow.plugins.migrations.MigrateToOutput"},
+func expectedContractDescriptors(t *testing.T) []contractDescriptor {
+	t.Helper()
+	out := moduleOnlyContractDescriptors(t)
+	p := internal.NewPlugin().(*internal.MigrationsPlugin)
+	stepInputs := map[string]string{
+		"step.migrate_up":     "workflow.plugins.migrations.MigrateUpInput",
+		"step.migrate_down":   "workflow.plugins.migrations.MigrateDownInput",
+		"step.migrate_status": "workflow.plugins.migrations.MigrateStatusInput",
+		"step.migrate_to":     "workflow.plugins.migrations.MigrateToInput",
 	}
+	stepOutputs := map[string]string{
+		"step.migrate_up":     "workflow.plugins.migrations.MigrateUpOutput",
+		"step.migrate_down":   "workflow.plugins.migrations.MigrateDownOutput",
+		"step.migrate_status": "workflow.plugins.migrations.MigrateStatusOutput",
+		"step.migrate_to":     "workflow.plugins.migrations.MigrateToOutput",
+	}
+	for stepType := range p.StepContracts() {
+		input, ok := stepInputs[stepType]
+		if !ok {
+			t.Fatalf("missing expected proto input for step contract %q", stepType)
+		}
+		output, ok := stepOutputs[stepType]
+		if !ok {
+			t.Fatalf("missing expected proto output for step contract %q", stepType)
+		}
+		out = append(out, contractDescriptor{Kind: "step", Type: stepType, Mode: "strict", Input: input, Output: output})
+	}
+	return sortedContracts(out)
+}
+
+func moduleOnlyContractDescriptors(t *testing.T) []contractDescriptor {
+	t.Helper()
+	p := internal.NewPlugin().(*internal.MigrationsPlugin)
+	moduleConfigs := map[string]string{
+		"database.migrations":       "workflow.plugins.migrations.MigrationsModuleConfig",
+		"database.migration_driver": "workflow.plugins.migrations.MigrationDriverConfig",
+	}
+	out := make([]contractDescriptor, 0, len(p.ModuleContracts()))
+	for moduleType := range p.ModuleContracts() {
+		config, ok := moduleConfigs[moduleType]
+		if !ok {
+			t.Fatalf("missing expected proto config for module contract %q", moduleType)
+		}
+		out = append(out, contractDescriptor{Kind: "module", Type: moduleType, Mode: "strict", Config: config})
+	}
+	return sortedContracts(out)
 }
 
 func sortedContracts(in []contractDescriptor) []contractDescriptor {
@@ -395,13 +496,18 @@ type pluginManifestFile struct {
 
 func readPluginManifest(t *testing.T) pluginManifestFile {
 	t.Helper()
-	data, err := os.ReadFile("../plugin.json")
+	return readPluginManifestAtPath(t, "../plugin.json")
+}
+
+func readPluginManifestAtPath(t *testing.T, path string) pluginManifestFile {
+	t.Helper()
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("open plugin.json: %v", err)
+		t.Fatalf("open %s: %v", path, err)
 	}
 	var manifest pluginManifestFile
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		t.Fatalf("parse plugin.json: %v", err)
+		t.Fatalf("parse %s: %v", path, err)
 	}
 	return manifest
 }
@@ -421,8 +527,34 @@ type goReleaserBuild struct {
 }
 
 type goReleaserArchive struct {
-	ID    string   `yaml:"id"`
-	Files []string `yaml:"files"`
+	ID    string              `yaml:"id"`
+	Files []goReleaserFileRef `yaml:"files"`
+}
+
+type goReleaserFileRef struct {
+	Src string
+	Dst string
+}
+
+func (f *goReleaserFileRef) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		f.Src = value.Value
+		f.Dst = value.Value
+		return nil
+	}
+	var mapped struct {
+		Src string `yaml:"src"`
+		Dst string `yaml:"dst"`
+	}
+	if err := value.Decode(&mapped); err != nil {
+		return err
+	}
+	f.Src = mapped.Src
+	f.Dst = mapped.Dst
+	if f.Dst == "" {
+		f.Dst = f.Src
+	}
+	return nil
 }
 
 func readGoReleaserConfig(t *testing.T) goReleaserConfig {
@@ -460,9 +592,9 @@ func (cfg goReleaserConfig) findArchive(t *testing.T, id string) goReleaserArchi
 	return goReleaserArchive{}
 }
 
-func (a goReleaserArchive) hasFile(name string) bool {
+func (a goReleaserArchive) hasFile(src, dst string) bool {
 	for _, file := range a.Files {
-		if file == name {
+		if file.Src == src && file.Dst == dst {
 			return true
 		}
 	}
