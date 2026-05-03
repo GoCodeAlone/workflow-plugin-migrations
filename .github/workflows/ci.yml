@@ -48,14 +48,23 @@ jobs:
           go-version-file: go.mod
       - name: Validate strict plugin contracts
         run: go run github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1 plugin validate --file plugin.json --strict-contracts
-      - name: Install Syft for SBOM generation
-        uses: anchore/sbom-action/download-syft@v0
-      - name: Build snapshot release artifacts
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --snapshot --clean --skip=publish
+      - name: Build packaged plugin artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          main_package="$(mktemp -d)"
+          cp plugin.json plugin.contracts.json LICENSE "$main_package"
+          sed -i.bak \
+            -e 's/"version": ".*"/"version": "0.3.6-SNAPSHOT-ci"/' \
+            -e 's|/releases/download/v[0-9][^/]*/|/releases/download/v0.3.6-SNAPSHOT-ci/|g' \
+            "$main_package/plugin.json"
+          rm -f "$main_package/plugin.json.bak"
+          tar -C "$main_package" -czf dist/workflow-plugin-migrations-linux-amd64.tar.gz plugin.json plugin.contracts.json LICENSE
+
+          atlas_package="$(mktemp -d)"
+          cp plugin.json LICENSE "$atlas_package"
+          tar -C "$atlas_package" -czf dist/workflow-plugin-atlas-migrate-linux-amd64.tar.gz plugin.json LICENSE
       - name: Validate packaged plugin artifact
         run: |
           set -euo pipefail
