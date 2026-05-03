@@ -417,16 +417,16 @@ func expectedContractDescriptors(t *testing.T) []contractDescriptor {
 	out := moduleOnlyContractDescriptors(t)
 	p := internal.NewPlugin().(*internal.MigrationsPlugin)
 	stepInputs := map[string]string{
-		"step.migrate_up":     "workflow.plugins.migrations.MigrateUpInput",
-		"step.migrate_down":   "workflow.plugins.migrations.MigrateDownInput",
-		"step.migrate_status": "workflow.plugins.migrations.MigrateStatusInput",
-		"step.migrate_to":     "workflow.plugins.migrations.MigrateToInput",
+		"step.migrate_up":     internal.ProtoMigrateUpInput,
+		"step.migrate_down":   internal.ProtoMigrateDownInput,
+		"step.migrate_status": internal.ProtoMigrateStatusInput,
+		"step.migrate_to":     internal.ProtoMigrateToInput,
 	}
 	stepOutputs := map[string]string{
-		"step.migrate_up":     "workflow.plugins.migrations.MigrateUpOutput",
-		"step.migrate_down":   "workflow.plugins.migrations.MigrateDownOutput",
-		"step.migrate_status": "workflow.plugins.migrations.MigrateStatusOutput",
-		"step.migrate_to":     "workflow.plugins.migrations.MigrateToOutput",
+		"step.migrate_up":     internal.ProtoMigrateUpOutput,
+		"step.migrate_down":   internal.ProtoMigrateDownOutput,
+		"step.migrate_status": internal.ProtoMigrateStatusOutput,
+		"step.migrate_to":     internal.ProtoMigrateToOutput,
 	}
 	for stepType := range p.StepContracts() {
 		input, ok := stepInputs[stepType]
@@ -446,8 +446,8 @@ func moduleOnlyContractDescriptors(t *testing.T) []contractDescriptor {
 	t.Helper()
 	p := internal.NewPlugin().(*internal.MigrationsPlugin)
 	moduleConfigs := map[string]string{
-		"database.migrations":       "workflow.plugins.migrations.MigrationsModuleConfig",
-		"database.migration_driver": "workflow.plugins.migrations.MigrationDriverConfig",
+		"database.migrations":       internal.ProtoMigrationsModuleConfig,
+		"database.migration_driver": internal.ProtoMigrationDriverConfig,
 	}
 	out := make([]contractDescriptor, 0, len(p.ModuleContracts()))
 	for moduleType := range p.ModuleContracts() {

@@ -6,6 +6,25 @@ import (
 	"github.com/GoCodeAlone/workflow/schema"
 )
 
+// Proto message names for the wfctl strict-contract descriptors.
+// These are the canonical fully-qualified proto type names referenced by
+// plugin.contracts.json and plugin.atlas.contracts.json.  Keeping them here
+// as exported constants gives the drift tests a single source of truth so that
+// renaming a message requires updating contracts.go, the JSON file, and—if the
+// constant is not updated—the test will flag the mismatch immediately.
+const (
+	ProtoMigrationsModuleConfig = "workflow.plugins.migrations.MigrationsModuleConfig"
+	ProtoMigrationDriverConfig  = "workflow.plugins.migrations.MigrationDriverConfig"
+	ProtoMigrateUpInput         = "workflow.plugins.migrations.MigrateUpInput"
+	ProtoMigrateUpOutput        = "workflow.plugins.migrations.MigrateUpOutput"
+	ProtoMigrateDownInput       = "workflow.plugins.migrations.MigrateDownInput"
+	ProtoMigrateDownOutput      = "workflow.plugins.migrations.MigrateDownOutput"
+	ProtoMigrateStatusInput     = "workflow.plugins.migrations.MigrateStatusInput"
+	ProtoMigrateStatusOutput    = "workflow.plugins.migrations.MigrateStatusOutput"
+	ProtoMigrateToInput         = "workflow.plugins.migrations.MigrateToInput"
+	ProtoMigrateToOutput        = "workflow.plugins.migrations.MigrateToOutput"
+)
+
 // moduleContracts returns field contracts for each module type provided by this plugin.
 // A contract describes the required/optional config inputs and outputs for a module type
 // so that the Workflow engine and audit tooling can validate configurations statically.
