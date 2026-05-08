@@ -97,3 +97,6 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
+
+release:
+  draft: true
