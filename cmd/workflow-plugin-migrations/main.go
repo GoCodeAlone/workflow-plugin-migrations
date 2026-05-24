@@ -17,5 +17,5 @@ import (
 var version string //nolint:unused
 
 func main() {
-	sdk.ServePluginFull(internal.NewPlugin(), cli.NewCLIProvider(), nil)
+	sdk.ServePluginFull(internal.NewPlugin(), cli.NewCLIProvider(), nil, sdk.WithBuildVersion(sdk.ResolveBuildVersion(internal.Version)))
 }
