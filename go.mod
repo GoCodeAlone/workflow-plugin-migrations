@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	ariga.io/atlas v1.2.0
-	github.com/GoCodeAlone/workflow v0.62.0
+	github.com/GoCodeAlone/workflow v0.64.0
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.9.2
