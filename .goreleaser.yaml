@@ -3,7 +3,8 @@ version: 2
 before:
   hooks:
     - go mod tidy
-    - sh -c "for manifest in plugin.json plugin.atlas.json; do sed -i.bak -e 's/\"version\": \".*\"/\"version\": \"{{ .Version }}\"/' -e 's|/releases/download/v[0-9][^/]*/|/releases/download/v{{ .Version }}/|g' \"$manifest\" && rm -f \"$manifest.bak\"; done"
+    - "sed -i.bak -e 's/\"version\": \".*\"/\"version\": \"{{ .Version }}\"/' -e 's|/releases/download/v[0-9][^/]*/|/releases/download/v{{ .Version }}/|g' plugin.json && rm -f plugin.json.bak"
+    - "sed -i.bak -e 's/\"version\": \".*\"/\"version\": \"{{ .Version }}\"/' -e 's|/releases/download/v[0-9][^/]*/|/releases/download/v{{ .Version }}/|g' plugin.atlas.json && rm -f plugin.atlas.json.bak"
 
 builds:
   # Main plugin binary: golang-migrate + goose + wfctl CLI
