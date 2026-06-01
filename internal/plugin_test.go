@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -321,14 +322,13 @@ func TestPlugin_DownloadsMatchGoReleaserMainArchiveMatrix(t *testing.T) {
 	for _, goos := range build.Goos {
 		for _, goarch := range build.Goarch {
 			key := goos + "/" + goarch
-			want[key] = "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v" +
-				manifest.Version + "/workflow-plugin-migrations-" + goos + "-" + goarch + ".tar.gz"
+			want[key] = "https://github.com/GoCodeAlone/workflow-plugin-migrations/releases/download/v<release>/workflow-plugin-migrations-" + goos + "-" + goarch + ".tar.gz"
 		}
 	}
 
 	got := make(map[string]string)
 	for _, d := range manifest.Downloads {
-		got[d.OS+"/"+d.Arch] = d.URL
+		got[d.OS+"/"+d.Arch] = normalizeReleaseDownloadURL(d.URL)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("plugin.json downloads do not match GoReleaser main archive matrix\ngot: %#v\nwant: %#v", got, want)
@@ -337,15 +337,14 @@ func TestPlugin_DownloadsMatchGoReleaserMainArchiveMatrix(t *testing.T) {
 
 func TestPlugin_GoReleaserManifestRewriteUpdatesDownloadURLs(t *testing.T) {
 	cfg := readGoReleaserConfig(t)
-	hook := ""
+	var hooks []string
 	for _, candidate := range cfg.Before.Hooks {
 		if strings.Contains(candidate, "/releases/download/") &&
 			strings.Contains(candidate, "/releases/download/v{{ .Version }}/") {
-			hook = candidate
-			break
+			hooks = append(hooks, candidate)
 		}
 	}
-	if hook == "" {
+	if len(hooks) == 0 {
 		t.Fatalf("GoReleaser before hook must rewrite download URLs with the v tag prefix")
 	}
 
@@ -361,10 +360,12 @@ func TestPlugin_GoReleaserManifestRewriteUpdatesDownloadURLs(t *testing.T) {
 	}
 
 	const snapshotVersion = "0.3.6-SNAPSHOT-test"
-	cmd := exec.Command("sh", "-c", strings.ReplaceAll(hook, "{{ .Version }}", snapshotVersion))
-	cmd.Dir = tmp
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("run GoReleaser manifest rewrite hook: %v\n%s", err, out)
+	for _, hook := range hooks {
+		cmd := exec.Command("sh", "-c", strings.ReplaceAll(hook, "{{ .Version }}", snapshotVersion))
+		cmd.Dir = tmp
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("run GoReleaser manifest rewrite hook: %v\n%s", err, out)
+		}
 	}
 
 	for _, name := range []string{"plugin.json", "plugin.atlas.json"} {
@@ -378,6 +379,12 @@ func TestPlugin_GoReleaserManifestRewriteUpdatesDownloadURLs(t *testing.T) {
 			}
 		}
 	}
+}
+
+var releaseDownloadURLRe = regexp.MustCompile(`/releases/download/v[^/]+/`)
+
+func normalizeReleaseDownloadURL(url string) string {
+	return releaseDownloadURLRe.ReplaceAllString(url, "/releases/download/v<release>/")
 }
 
 func TestPlugin_GoReleaserArchivesPackageCorrectManifestsAndContracts(t *testing.T) {
