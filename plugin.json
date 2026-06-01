@@ -1,6 +1,6 @@
 {
   "name": "workflow-plugin-migrations",
-  "version": "0.3.9",
+  "version": "0.0.0",
   "description": "Database migration plugin for the workflow engine: golang-migrate + goose + atlas drivers, pre-deploy runner, wfctl migrate CLI, static lint tool",
   "author": "GoCodeAlone",
   "license": "Apache-2.0",
