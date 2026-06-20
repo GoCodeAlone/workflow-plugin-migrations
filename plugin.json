@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "type": "external",
   "tier": "community",
-  "minEngineVersion": "0.51.7",
+  "minEngineVersion": "0.80.24",
   "keywords": [
     "migrations",
     "database",
