@@ -32,7 +32,7 @@ func (p *MigrationsPlugin) Manifest() sdk.PluginManifest {
 		Name:        "workflow-plugin-migrations",
 		Version:     Version,
 		Author:      "GoCodeAlone",
-		Description: "Database migration plugin: golang-migrate + goose drivers, pre-deploy runner, wfctl migrate CLI",
+		Description: "Database migration plugin: golang-migrate + goose + atlas drivers, pre-deploy runner, wfctl db-migrate CLI",
 	}
 }
 

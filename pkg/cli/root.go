@@ -1,4 +1,4 @@
-// Package cli provides the shared Cobra root command for `wfctl migrate *`
+// Package cli provides the shared Cobra root command for `wfctl db-migrate *`
 // and the standalone `workflow-migrate` binary. Both entry points call the
 // same command tree so the behaviour is identical regardless of invocation.
 package cli
@@ -36,10 +36,10 @@ func (c *cliProvider) RunCLI(args []string) int {
 	return 0
 }
 
-// NewRoot builds the Cobra root command for the migrate CLI.
+// NewRoot builds the Cobra root command for the db-migrate CLI.
 func NewRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "migrate",
+		Use:   "db-migrate",
 		Short: "Database migration commands",
 		Long:  "Run, inspect, and test database migrations via golang-migrate, goose, or atlas.",
 	}
