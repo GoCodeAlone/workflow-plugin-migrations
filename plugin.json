@@ -1,7 +1,7 @@
 {
   "name": "workflow-plugin-migrations",
   "version": "0.0.0",
-  "description": "Database migration plugin for the workflow engine: golang-migrate + goose + atlas drivers, pre-deploy runner, wfctl migrate CLI, static lint tool",
+  "description": "Database migration plugin for the workflow engine: golang-migrate + goose + atlas drivers, pre-deploy runner, wfctl db-migrate CLI, static lint tool",
   "author": "GoCodeAlone",
   "license": "Apache-2.0",
   "type": "external",
@@ -36,7 +36,7 @@
     ],
     "cliCommands": [
       {
-        "name": "migrate",
+        "name": "db-migrate",
         "description": "Run and inspect database migrations",
         "subcommands": [
           {

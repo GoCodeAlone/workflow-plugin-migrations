@@ -4,7 +4,7 @@
 // pipeline step types (step.migrate_up/down/status/to).
 //
 // When invoked with --wfctl-cli, it serves as the entrypoint for
-// `wfctl migrate *` dynamic CLI commands.
+// `wfctl db-migrate *` dynamic CLI commands.
 package main
 
 import (
