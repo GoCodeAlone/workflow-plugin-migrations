@@ -36,7 +36,7 @@ func (c *cliProvider) RunCLI(args []string) int {
 	return 0
 }
 
-// NewRoot builds the Cobra root command for the migrate CLI.
+// NewRoot builds the Cobra root command for the db-migrate CLI.
 func NewRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "db-migrate",
