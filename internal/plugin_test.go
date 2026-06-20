@@ -359,7 +359,7 @@ func TestPlugin_GoReleaserManifestRewriteUpdatesDownloadURLs(t *testing.T) {
 		}
 	}
 
-	const snapshotVersion = "0.3.6-SNAPSHOT-test"
+	const snapshotVersion = "0.3.10-SNAPSHOT-test"
 	for _, hook := range hooks {
 		cmd := exec.Command("sh", "-c", strings.ReplaceAll(hook, "{{ .Version }}", snapshotVersion))
 		cmd.Dir = tmp
