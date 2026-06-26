@@ -111,7 +111,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    needs: release
+    needs:
+      - release
+      - docker
     if: >-
       !github.event.deleted
       && !contains(github.ref_name, '-')
