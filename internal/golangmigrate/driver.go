@@ -3,17 +3,26 @@ package golangmigrate
 
 import (
 	"context"
+	"database/sql"
+	sqldriver "database/sql/driver"
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	"github.com/golang-migrate/migrate/v4/database"
+	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	migratefile "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn/ctxwatch"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/GoCodeAlone/workflow/interfaces"
 )
@@ -28,12 +37,13 @@ func New() *Driver { return &Driver{} }
 func (d *Driver) Name() string { return "golang-migrate" }
 
 // Up applies all pending migrations.
-func (d *Driver) Up(ctx context.Context, req interfaces.MigrationRequest) (interfaces.MigrationResult, error) {
+func (d *Driver) Up(ctx context.Context, req interfaces.MigrationRequest) (result interfaces.MigrationResult, err error) {
+	defer preserveContextError(ctx, &err)
 	if err := req.Validate(); err != nil {
 		return interfaces.MigrationResult{}, err
 	}
 	start := time.Now()
-	m, err := newMigrate(req)
+	m, err := newMigrate(ctx, req)
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
 	}
@@ -72,12 +82,13 @@ func (d *Driver) Up(ctx context.Context, req interfaces.MigrationRequest) (inter
 }
 
 // Down rolls back N migrations (Options.Steps, default 1).
-func (d *Driver) Down(ctx context.Context, req interfaces.MigrationRequest) (interfaces.MigrationResult, error) {
+func (d *Driver) Down(ctx context.Context, req interfaces.MigrationRequest) (result interfaces.MigrationResult, err error) {
+	defer preserveContextError(ctx, &err)
 	if err := req.Validate(); err != nil {
 		return interfaces.MigrationResult{}, err
 	}
 	start := time.Now()
-	m, err := newMigrate(req)
+	m, err := newMigrate(ctx, req)
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
 	}
@@ -127,11 +138,12 @@ func (d *Driver) Down(ctx context.Context, req interfaces.MigrationRequest) (int
 }
 
 // Status returns the current migration version and pending migrations.
-func (d *Driver) Status(_ context.Context, req interfaces.MigrationRequest) (interfaces.MigrationStatus, error) {
+func (d *Driver) Status(ctx context.Context, req interfaces.MigrationRequest) (status interfaces.MigrationStatus, err error) {
+	defer preserveContextError(ctx, &err)
 	if err := req.Validate(); err != nil {
 		return interfaces.MigrationStatus{}, err
 	}
-	m, err := newMigrate(req)
+	m, err := newMigrate(ctx, req)
 	if err != nil {
 		return interfaces.MigrationStatus{}, fmt.Errorf("golang-migrate: %w", err)
 	}
@@ -159,12 +171,13 @@ func (d *Driver) Status(_ context.Context, req interfaces.MigrationRequest) (int
 }
 
 // Goto migrates to the specified version (up or down).
-func (d *Driver) Goto(_ context.Context, req interfaces.MigrationRequest, target string) (interfaces.MigrationResult, error) {
+func (d *Driver) Goto(ctx context.Context, req interfaces.MigrationRequest, target string) (result interfaces.MigrationResult, err error) {
+	defer preserveContextError(ctx, &err)
 	if err := req.Validate(); err != nil {
 		return interfaces.MigrationResult{}, err
 	}
 	start := time.Now()
-	m, err := newMigrate(req)
+	m, err := newMigrate(ctx, req)
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
 	}
@@ -201,7 +214,8 @@ type RepairDirtyOptions struct {
 }
 
 // Force sets the recorded migration version without applying migration files.
-func (d *Driver) Force(_ context.Context, req interfaces.MigrationRequest, target string, opts ForceOptions) (interfaces.MigrationResult, error) {
+func (d *Driver) Force(ctx context.Context, req interfaces.MigrationRequest, target string, opts ForceOptions) (result interfaces.MigrationResult, err error) {
+	defer preserveContextError(ctx, &err)
 	if err := req.Validate(); err != nil {
 		return interfaces.MigrationResult{}, err
 	}
@@ -221,7 +235,7 @@ func (d *Driver) Force(_ context.Context, req interfaces.MigrationRequest, targe
 		}
 	}
 
-	m, err := newMigrate(req)
+	m, err := newMigrate(ctx, req)
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
 	}
@@ -247,7 +261,8 @@ func (d *Driver) Force(_ context.Context, req interfaces.MigrationRequest, targe
 
 // RepairDirty verifies a dirty database is at the exact expected version before
 // forcing metadata. With UpIfClean, a clean database runs normal up instead.
-func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationRequest, opts RepairDirtyOptions) (interfaces.MigrationResult, error) {
+func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationRequest, opts RepairDirtyOptions) (result interfaces.MigrationResult, err error) {
+	defer preserveContextError(ctx, &err)
 	if err := req.Validate(); err != nil {
 		return interfaces.MigrationResult{}, err
 	}
@@ -282,7 +297,7 @@ func (d *Driver) RepairDirty(ctx context.Context, req interfaces.MigrationReques
 		}
 	}
 
-	m, err := newMigrate(req)
+	m, err := newMigrate(ctx, req)
 	if err != nil {
 		return interfaces.MigrationResult{}, fmt.Errorf("golang-migrate: %w", err)
 	}
@@ -373,21 +388,189 @@ func versionExists(dir string, target uint) (bool, error) {
 	}
 }
 
-// newMigrate creates a migrate.Migrate from a MigrationRequest.
-// The DSN is expected to be a postgres:// URL; we rewrite it to pgx5:// for
-// the pgx/v5 driver.
-func newMigrate(req interfaces.MigrationRequest) (*migrate.Migrate, error) {
-	dsn := req.DSN
-	// golang-migrate pgx/v5 driver registers as "pgx5" and expects pgx5:// scheme.
-	switch {
-	case strings.HasPrefix(dsn, "postgres://"):
-		dsn = "pgx5://" + dsn[len("postgres://"):]
-	case strings.HasPrefix(dsn, "postgresql://"):
-		dsn = "pgx5://" + dsn[len("postgresql://"):]
+// golang-migrate's pgx backend uses background contexts. Bind its SQL connection
+// to this operation while retaining the backend's migration and locking logic.
+func newMigrate(ctx context.Context, req interfaces.MigrationRequest) (*migrationSession, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+	u, err := url.Parse(req.DSN)
+	if err != nil {
+		return nil, err
+	}
+	switch u.Scheme {
+	case "postgres", "postgresql", "pgx5":
+		u.Scheme = "postgres"
+	default:
+		return nil, fmt.Errorf("golang-migrate: unsupported database scheme %q", u.Scheme)
+	}
+	backendConfig, err := postgresConfig(u)
+	if err != nil {
+		return nil, err
+	}
+	config, err := pgx.ParseConfig(migrate.FilterCustomQuery(u).String())
+	if err != nil {
+		return nil, err
+	}
+	config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+		return &pgconn.CancelRequestContextWatcherHandler{Conn: conn, DeadlineDelay: time.Second}
+	}
+	connector := &contextConnector{Connector: stdlib.GetConnector(*config), ctx: ctx}
+	db := sql.OpenDB(connector)
+	db.SetMaxOpenConns(1)
+	backend, err := pgxmigrate.WithInstance(db, backendConfig)
+	if err != nil {
+		_ = db.Close()
+		// WithInstance can fail after reserving its sql.Conn without releasing it.
+		connector.closeConnection()
+		return nil, err
+	}
+	m, err := migrate.NewWithDatabaseInstance("file://"+req.Source.Dir, "pgx5", backend)
+	if err != nil {
+		_ = backend.Close()
+		return nil, err
+	}
+	return &migrationSession{migrationEngine: m, backend: backend}, nil
+}
 
-	sourceURL := "file://" + req.Source.Dir
-	return migrate.New(sourceURL, dsn)
+type migrationEngine = migrate.Migrate
+
+type migrationSession struct {
+	*migrationEngine
+	backend database.Driver
+}
+
+// Migrate.Version discards dirty=true for a failed down to the nil version.
+// Read the same backend metadata while retaining that fail-closed status.
+func (m *migrationSession) Version() (uint, bool, error) {
+	version, dirty, err := m.backend.Version()
+	if err != nil {
+		return 0, false, err
+	}
+	if version == database.NilVersion {
+		return 0, dirty, migrate.ErrNilVersion
+	}
+	return uint(version), dirty, nil
+}
+
+// Preserve the pgx backend's URL options, including the existing advisory-lock
+// identity (URL path, schema, table) so old and new clients serialize together.
+func postgresConfig(u *url.URL) (*pgxmigrate.Config, error) {
+	q := u.Query()
+	config := &pgxmigrate.Config{DatabaseName: u.Path, MigrationsTable: q.Get("x-migrations-table"), MultiStatementMaxSize: pgxmigrate.DefaultMultiStatementMaxSize}
+	for key, target := range map[string]*bool{"x-migrations-table-quoted": &config.MigrationsTableQuoted, "x-multi-statement": &config.MultiStatementEnabled} {
+		if value := q.Get(key); value != "" {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return nil, fmt.Errorf("golang-migrate: %s: %w", key, err)
+			}
+			*target = parsed
+		}
+	}
+	if config.MigrationsTableQuoted && config.MigrationsTable != "" && (!strings.HasPrefix(config.MigrationsTable, "\"") || !strings.HasSuffix(config.MigrationsTable, "\"")) {
+		return nil, fmt.Errorf("golang-migrate: x-migrations-table must be quoted")
+	}
+	if value := q.Get("x-statement-timeout"); value != "" {
+		ms, err := strconv.Atoi(value)
+		if err != nil {
+			return nil, err
+		}
+		config.StatementTimeout = time.Duration(ms) * time.Millisecond
+	}
+	if value := q.Get("x-multi-statement-max-size"); value != "" {
+		size, err := strconv.Atoi(value)
+		if err != nil {
+			return nil, err
+		}
+		if size > 0 {
+			config.MultiStatementMaxSize = size
+		}
+	}
+	return config, nil
+}
+
+func preserveContextError(ctx context.Context, err *error) {
+	if *err != nil && ctx.Err() != nil {
+		*err = errors.Join(*err, ctx.Err())
+	}
+}
+
+type contextConnector struct {
+	sqldriver.Connector
+	ctx        context.Context
+	mu         sync.Mutex
+	connection *stdlib.Conn
+}
+
+func (c *contextConnector) Connect(context.Context) (sqldriver.Conn, error) {
+	conn, err := c.Connector.Connect(c.ctx)
+	if err != nil {
+		return nil, err
+	}
+	native := conn.(*stdlib.Conn)
+	c.mu.Lock()
+	c.connection = native
+	c.mu.Unlock()
+	return &contextConnection{Conn: native, ctx: c.ctx}, nil
+}
+
+func (c *contextConnector) closeConnection() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.connection != nil {
+		_ = c.connection.Close()
+	}
+}
+
+type contextConnection struct {
+	*stdlib.Conn
+	ctx context.Context
+}
+
+func (c *contextConnection) ExecContext(ctx context.Context, query string, args []sqldriver.NamedValue) (sqldriver.Result, error) {
+	operation := c.ctx
+	// Keep a backend x-statement-timeout if it precedes the caller's deadline.
+	if deadline, ok := ctx.Deadline(); ok {
+		var cancel context.CancelFunc
+		operation, cancel = context.WithDeadline(operation, deadline)
+		defer cancel()
+	}
+	return c.Conn.ExecContext(operation, query, args)
+}
+
+func (c *contextConnection) QueryContext(_ context.Context, query string, args []sqldriver.NamedValue) (sqldriver.Rows, error) {
+	return c.Conn.QueryContext(c.ctx, query, args)
+}
+
+func (c *contextConnection) Ping(context.Context) error         { return c.Conn.Ping(c.ctx) }
+func (c *contextConnection) ResetSession(context.Context) error { return c.Conn.ResetSession(c.ctx) }
+func (c *contextConnection) Begin() (sqldriver.Tx, error) {
+	return c.BeginTx(c.ctx, sqldriver.TxOptions{})
+}
+func (c *contextConnection) BeginTx(_ context.Context, opts sqldriver.TxOptions) (sqldriver.Tx, error) {
+	return c.Conn.BeginTx(c.ctx, opts)
+}
+func (c *contextConnection) Prepare(query string) (sqldriver.Stmt, error) {
+	return c.PrepareContext(c.ctx, query)
+}
+func (c *contextConnection) PrepareContext(_ context.Context, query string) (sqldriver.Stmt, error) {
+	stmt, err := c.Conn.PrepareContext(c.ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return &contextStatement{Stmt: stmt, ctx: c.ctx}, nil
+}
+
+type contextStatement struct {
+	sqldriver.Stmt
+	ctx context.Context
+}
+
+func (s *contextStatement) ExecContext(_ context.Context, args []sqldriver.NamedValue) (sqldriver.Result, error) {
+	return s.Stmt.(sqldriver.StmtExecContext).ExecContext(s.ctx, args)
+}
+func (s *contextStatement) QueryContext(_ context.Context, args []sqldriver.NamedValue) (sqldriver.Rows, error) {
+	return s.Stmt.(sqldriver.StmtQueryContext).QueryContext(s.ctx, args)
 }
 
 // versionsInRange opens the file source and returns version strings v where

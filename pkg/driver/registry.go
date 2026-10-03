@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/GoCodeAlone/workflow-plugin-migrations/internal/atlas"
+	"github.com/GoCodeAlone/workflow-plugin-migrations/internal/golangmigrate"
+	"github.com/GoCodeAlone/workflow-plugin-migrations/internal/goose"
 )
 
 // Registry is a thread-safe in-process registry of named MigrationDrivers.
@@ -15,6 +19,15 @@ type Registry struct {
 // NewRegistry returns an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{drivers: make(map[string]Driver)}
+}
+
+// NewDefaultRegistry returns a fresh registry of the built-in native drivers.
+func NewDefaultRegistry() *Registry {
+	r := NewRegistry()
+	r.MustRegister(golangmigrate.New())
+	r.MustRegister(goose.New())
+	r.MustRegister(atlas.New())
+	return r
 }
 
 // Register adds a driver to the registry. Returns an error if a driver with
