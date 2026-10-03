@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
-
+	"github.com/GoCodeAlone/workflow-plugin-migrations/pkg/driver"
 	"github.com/GoCodeAlone/workflow-plugin-migrations/pkg/testharness"
 	"github.com/GoCodeAlone/workflow/interfaces"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -26,6 +27,22 @@ func TestRootIncludesForceCommand(t *testing.T) {
 	}
 	if cmd == nil || cmd.Name() != "force" {
 		t.Fatalf("Find(force) = %v; want force command", cmd)
+	}
+}
+
+func TestTimeoutFlagOnlyOnRunnerCommands(t *testing.T) {
+	root := NewRoot()
+	for _, name := range []string{"up", "down", "status", "goto", "force", "repair-dirty", "validate-upgrade", "test"} {
+		t.Run(name, func(t *testing.T) {
+			cmd, _, err := root.Find([]string{name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := name == "up" || name == "down" || name == "status" || name == "goto"
+			if got := cmd.Flags().Lookup("timeout") != nil; got != want {
+				t.Fatalf("%s advertises timeout=%t; runner-backed=%t", name, got, want)
+			}
+		})
 	}
 }
 
@@ -48,7 +65,7 @@ func TestRootIncludesRepairDirtyCommand(t *testing.T) {
 
 func TestWriteStatusIncludesExplicitDirtyFlag(t *testing.T) {
 	var out bytes.Buffer
-	writeStatus(&out, interfaces.MigrationStatus{
+	_ = writeStatus(&out, interfaces.MigrationStatus{
 		Current: "202604270001",
 		Dirty:   false,
 	})
@@ -59,7 +76,7 @@ func TestWriteStatusIncludesExplicitDirtyFlag(t *testing.T) {
 	}
 
 	out.Reset()
-	writeStatus(&out, interfaces.MigrationStatus{
+	_ = writeStatus(&out, interfaces.MigrationStatus{
 		Current: "202604270001",
 		Dirty:   true,
 	})
@@ -389,7 +406,7 @@ func (f *fakeUpDriver) Goto(_ context.Context, _ interfaces.MigrationRequest, _ 
 }
 
 func TestUpCmd_AcceptsUpIfCleanFlag(t *testing.T) {
-	cmd := newUpCmd()
+	cmd := newUpCmd(driver.NewDefaultRegistry())
 	flag := cmd.Flags().Lookup("up-if-clean")
 	if flag == nil {
 		t.Fatal("up command missing --up-if-clean flag")
@@ -400,32 +417,95 @@ func TestUpCmd_AcceptsUpIfCleanFlag(t *testing.T) {
 }
 
 func TestUpCmd_UpIfCleanIsNoopWhenAlreadyClean(t *testing.T) {
-	// Override the driver-construction seam so the test doesn't need a real DB.
-	old := buildDriverAndRequestForTest
-	buildDriverAndRequestForTest = func(cmd *cobra.Command) (interfaces.MigrationDriver, interfaces.MigrationRequest, error) {
-		return &fakeUpDriver{appliedCount: 0}, interfaces.MigrationRequest{}, nil
-	}
-	defer func() { buildDriverAndRequestForTest = old }()
-
-	cmd := newUpCmd()
-	cmd.SetArgs([]string{"--up-if-clean", "--source-dir", t.TempDir()})
+	reg := driver.NewRegistry()
+	reg.MustRegister(&fakeUpDriver{appliedCount: 0})
+	cmd := newUpCmd(reg)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--driver", "fake", "--dsn", "postgres://local/db", "--up-if-clean", "--source-dir", t.TempDir()})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("up --up-if-clean against clean DB: got error %v, want nil", err)
+	}
+	if !strings.Contains(out.String(), "up-if-clean: no pending migrations") {
+		t.Fatalf("injected output=%q", out.String())
 	}
 }
 
 func TestUpCmd_UpIfCleanAppliesWhenPendingMigrationsExist(t *testing.T) {
-	// When migrations ARE pending, --up-if-clean should still apply them.
-	old := buildDriverAndRequestForTest
-	buildDriverAndRequestForTest = func(cmd *cobra.Command) (interfaces.MigrationDriver, interfaces.MigrationRequest, error) {
-		return &fakeUpDriver{appliedCount: 2}, interfaces.MigrationRequest{}, nil
-	}
-	defer func() { buildDriverAndRequestForTest = old }()
-
-	cmd := newUpCmd()
-	cmd.SetArgs([]string{"--up-if-clean", "--source-dir", t.TempDir()})
+	reg := driver.NewRegistry()
+	reg.MustRegister(&fakeUpDriver{appliedCount: 2})
+	cmd := newUpCmd(reg)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--driver", "fake", "--dsn", "postgres://local/db", "--up-if-clean", "--source-dir", t.TempDir()})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("up --up-if-clean with pending migrations: got error %v, want nil", err)
+	}
+	if !strings.Contains(out.String(), "Applied 2 migration(s)") {
+		t.Fatalf("injected output=%q", out.String())
+	}
+}
+
+func TestRootRunnerHonorsExecuteContext(t *testing.T) {
+	for _, args := range [][]string{{"up"}, {"down"}, {"status"}, {"goto", "1"}} {
+		t.Run(args[0], func(t *testing.T) {
+			reg := driver.NewRegistry()
+			reg.MustRegister(&fakeUpDriver{appliedCount: 1})
+			root := newRoot(reg)
+			var out, diagnostics bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&diagnostics)
+			root.SetArgs(append(args, "--driver", "fake", "--dsn", "postgres://local/db", "--source-dir", t.TempDir()))
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if err := root.ExecuteContext(ctx); !errors.Is(err, context.Canceled) {
+				t.Fatalf("ExecuteContext=%v", err)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("cancelled command output=%q", out.String())
+			}
+		})
+	}
+}
+
+func TestRootRunnerRedactsErrorsAndUsesCommandOutput(t *testing.T) {
+	for _, args := range [][]string{{"up"}, {"down"}, {"status"}, {"goto", "1"}} {
+		t.Run(args[0], func(t *testing.T) {
+			reg := driver.NewRegistry()
+			reg.MustRegister(&fakeUpDriver{appliedCount: 1})
+			root := newRoot(reg)
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetArgs(append(args, "--driver", "fake", "--dsn", "postgres://local/db", "--source-dir", t.TempDir()))
+			if err := root.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if out.Len() == 0 {
+				t.Fatal("command bypassed injected output")
+			}
+		})
+	}
+	root := NewRoot()
+	var diagnostics bytes.Buffer
+	root.SetErr(&diagnostics)
+	root.SetArgs([]string{"up", "--dsn", "postgres://user:task15-private@localhost/db?connect_timeout=invalid", "--source-dir", t.TempDir()})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("invalid connection accepted")
+	}
+	if strings.Contains(err.Error(), "task15-private") || strings.Contains(diagnostics.String(), "task15-private") {
+		t.Fatal("CLI leaked DSN password")
+	}
+}
+
+func TestCLIProviderAcceptsSDKCommandPrefix(t *testing.T) {
+	args := []string{"db-migrate", "--help"}
+	original := append([]string(nil), args...)
+	if code := NewCLIProvider().RunCLI(args); code != 0 {
+		t.Fatalf("SDK CLI command returned %d; want help success", code)
+	}
+	if !reflect.DeepEqual(args, original) {
+		t.Fatal("CLI provider mutated caller arguments")
 	}
 }
 

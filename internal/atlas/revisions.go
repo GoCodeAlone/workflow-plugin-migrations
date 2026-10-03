@@ -20,12 +20,12 @@ type sqlRevisionRW struct {
 }
 
 // newSQLRevisionRW returns a sqlRevisionRW backed by the given *sql.DB.
-func newSQLRevisionRW(db *sql.DB, table string) (*sqlRevisionRW, error) {
+func newSQLRevisionRW(ctx context.Context, db *sql.DB, table string) (*sqlRevisionRW, error) {
 	if table == "" {
 		table = defaultRevisionsTable
 	}
 	rw := &sqlRevisionRW{db: db, table: table}
-	if err := rw.init(context.Background()); err != nil {
+	if err := rw.init(ctx); err != nil {
 		return nil, err
 	}
 	return rw, nil

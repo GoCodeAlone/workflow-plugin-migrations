@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Public `pkg/runner.New` and `driver.NewDefaultRegistry` for ordered in-process
+  migrations with explicit requests, caller context, operation timeouts, typed
+  results, and injected output. Runner diagnostics redact connection credentials
+  and are limited to 4 KiB.
+- Ordinary migration CLI commands use the same runner with command context and
+  output instead of process-global test hooks; `--timeout` bounds operations.
+
 - `up --up-if-clean` flag: makes the `up` subcommand idempotent in deploy CMDs. Same
   effect as plain `up` when no migrations are pending (exits 0 with an informative
   message); the difference is that the flag is now accepted by cobra. Resolves
@@ -19,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workflow-migrate validate-upgrade` for applying baseline migrations and then candidate migrations against the same database, catching upgrade-path failures that fresh-database migration tests miss.
 
 ### Fixed
+
+- Native golang-migrate operations propagate caller cancellation through
+  connection establishment, SQL, and advisory-lock waits. PostgreSQL receives a
+  cancel request; failed initialization closes its reserved connection.
+- Atlas revision-table and library initialization use the operation context;
+  the timeout flag is limited to the four runner-backed CLI commands.
+- Status retains the dirty nil-version marker after failed rollback of the first
+  migration instead of reporting a clean database.
+
+- External SDK CLI dispatch accepts the leading `db-migrate` command supplied by
+  wfctl instead of interpreting it as an unknown nested command.
 
 - Atlas Executor panic recovery: `Up()` and `Status()` in the atlas driver now wrap
   calls into `ariga.io/atlas/sql/migrate.(*Executor).*` with `defer recover()` so an

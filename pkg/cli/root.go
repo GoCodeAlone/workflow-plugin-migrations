@@ -14,9 +14,9 @@ import (
 
 	"github.com/GoCodeAlone/workflow/interfaces"
 
-	atlasdriver "github.com/GoCodeAlone/workflow-plugin-migrations/internal/atlas"
 	"github.com/GoCodeAlone/workflow-plugin-migrations/internal/golangmigrate"
-	"github.com/GoCodeAlone/workflow-plugin-migrations/internal/goose"
+	"github.com/GoCodeAlone/workflow-plugin-migrations/pkg/driver"
+	"github.com/GoCodeAlone/workflow-plugin-migrations/pkg/runner"
 )
 
 // cliProvider implements sdk.CLIProvider by dispatching to the Cobra root.
@@ -28,6 +28,10 @@ func NewCLIProvider() *cliProvider { return &cliProvider{} }
 // RunCLI implements sdk.CLIProvider.
 func (c *cliProvider) RunCLI(args []string) int {
 	root := NewRoot()
+	// The SDK includes the dynamic command name; Cobra expects only its args.
+	if len(args) > 0 && args[0] == root.Name() {
+		args = args[1:]
+	}
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -38,16 +42,21 @@ func (c *cliProvider) RunCLI(args []string) int {
 
 // NewRoot builds the Cobra root command for the db-migrate CLI.
 func NewRoot() *cobra.Command {
+	return newRoot(driver.NewDefaultRegistry())
+}
+
+func newRoot(registry *driver.Registry) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "db-migrate",
-		Short: "Database migration commands",
-		Long:  "Run, inspect, and test database migrations via golang-migrate, goose, or atlas.",
+		Use:          "db-migrate",
+		SilenceUsage: true,
+		Short:        "Database migration commands",
+		Long:         "Run, inspect, and test database migrations via golang-migrate, goose, or atlas.",
 	}
 	root.AddCommand(
-		newUpCmd(),
-		newDownCmd(),
-		newStatusCmd(),
-		newGotoCmd(),
+		newUpCmd(registry),
+		newDownCmd(registry),
+		newStatusCmd(registry),
+		newGotoCmd(registry),
 		newForceCmd(),
 		newRepairDirtyCmd(),
 		newValidateUpgradeCmd(),
@@ -66,43 +75,56 @@ func sharedFlags(cmd *cobra.Command) {
 	_ = cmd.MarkFlagRequired("source-dir")
 }
 
-// buildDriverAndRequestForTest is the package-level seam that lets tests stub
-// out driver construction. Production calls go straight through to
-// buildDriverAndRequest.
-var buildDriverAndRequestForTest = buildDriverAndRequest
+func runnerFlags(cmd *cobra.Command) {
+	sharedFlags(cmd)
+	cmd.Flags().Duration("timeout", 0, "Operation timeout (0 uses the caller deadline)")
+}
 
 // buildDriverAndRequest resolves the driver and constructs a MigrationRequest from flags.
 func buildDriverAndRequest(cmd *cobra.Command) (interfaces.MigrationDriver, interfaces.MigrationRequest, error) {
+	req, err := requestFromFlags(cmd)
+	if err != nil {
+		return nil, req, err
+	}
 	driverName, _ := cmd.Flags().GetString("driver")
+	if driverName == "" {
+		driverName = "golang-migrate"
+	}
+	d, err := driver.NewDefaultRegistry().Get(driverName)
+	return d, req, err
+}
+
+func buildRunnerAndRequest(cmd *cobra.Command, registry *driver.Registry) (driver.Driver, driver.Request, error) {
+	req, err := requestFromFlags(cmd)
+	if err != nil {
+		return nil, req, err
+	}
+	name, _ := cmd.Flags().GetString("driver")
+	// Cobra owns presentation and error reporting; the runner still supplies
+	// validation, cancellation, and redacted errors for every ordinary operation.
+	r, err := runner.New(registry, name, io.Discard, io.Discard)
+	return r, req, err
+}
+
+func requestFromFlags(cmd *cobra.Command) (driver.Request, error) {
 	sourceDir, _ := cmd.Flags().GetString("source-dir")
 	dsn, _ := cmd.Flags().GetString("dsn")
 	if dsn == "" {
 		dsn = os.Getenv("DATABASE_URL")
 	}
 	if dsn == "" {
-		return nil, interfaces.MigrationRequest{}, fmt.Errorf("no DSN: set --dsn or DATABASE_URL env var")
+		return driver.Request{}, fmt.Errorf("no DSN: set --dsn or DATABASE_URL env var")
 	}
-
-	var d interfaces.MigrationDriver
-	switch driverName {
-	case "golang-migrate", "":
-		d = golangmigrate.New()
-	case "goose":
-		d = goose.New()
-	case "atlas":
-		d = atlasdriver.New()
-	default:
-		return nil, interfaces.MigrationRequest{}, fmt.Errorf("unknown driver %q (supported: golang-migrate, goose, atlas)", driverName)
-	}
-
+	timeout, _ := cmd.Flags().GetDuration("timeout")
 	req := interfaces.MigrationRequest{
-		DSN:    dsn,
-		Source: interfaces.MigrationSource{Dir: sourceDir},
+		DSN:     dsn,
+		Source:  interfaces.MigrationSource{Dir: sourceDir},
+		Options: interfaces.MigrationOptions{Timeout: timeout},
 	}
-	return d, req, nil
+	return req, nil
 }
 
-func newUpCmd() *cobra.Command {
+func newUpCmd(registry *driver.Registry) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Apply all pending migrations",
@@ -116,113 +138,115 @@ intent explicit and, crucially, must be accepted by cobra so deploy CMDs
 that pass it succeed.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			upIfClean, _ := cmd.Flags().GetBool("up-if-clean")
-			d, req, err := buildDriverAndRequestForTest(cmd)
+			d, req, err := buildRunnerAndRequest(cmd, registry)
 			if err != nil {
 				return err
 			}
-			result, err := d.Up(context.Background(), req)
+			result, err := d.Up(cmd.Context(), req)
 			if err != nil {
 				return fmt.Errorf("migrate up: %w", err)
 			}
 			if len(result.Applied) == 0 {
 				if upIfClean {
-					fmt.Println("up-if-clean: no pending migrations; database is clean.")
+					_, err = fmt.Fprintln(cmd.OutOrStdout(), "up-if-clean: no pending migrations; database is clean.")
 				} else {
-					fmt.Println("No pending migrations.")
+					_, err = fmt.Fprintln(cmd.OutOrStdout(), "No pending migrations.")
 				}
-				return nil
+				return err
 			}
-			fmt.Printf("Applied %d migration(s): %v\n", len(result.Applied), result.Applied)
-			return nil
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Applied %d migration(s): %v\n", len(result.Applied), result.Applied)
+			return err
 		},
 	}
-	sharedFlags(cmd)
+	runnerFlags(cmd)
 	cmd.Flags().Bool("up-if-clean", false, "Idempotent up: exit 0 when no migrations are pending. Required for deploy CMDs that may re-run against an already-current database.")
 	return cmd
 }
 
-func newDownCmd() *cobra.Command {
+func newDownCmd(registry *driver.Registry) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "down",
 		Short: "Roll back N migrations (default: 1)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			d, req, err := buildDriverAndRequest(cmd)
+			d, req, err := buildRunnerAndRequest(cmd, registry)
 			if err != nil {
 				return err
 			}
 			steps, _ := cmd.Flags().GetInt("steps")
 			req.Options.Steps = steps
-			result, err := d.Down(context.Background(), req)
+			result, err := d.Down(cmd.Context(), req)
 			if err != nil {
 				return fmt.Errorf("migrate down: %w", err)
 			}
-			fmt.Printf("Rolled back %d migration(s): %v\n", len(result.Applied), result.Applied)
-			return nil
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Rolled back %d migration(s): %v\n", len(result.Applied), result.Applied)
+			return err
 		},
 	}
-	sharedFlags(cmd)
+	runnerFlags(cmd)
 	cmd.Flags().Int("steps", 1, "Number of migrations to roll back")
 	return cmd
 }
 
-func newStatusCmd() *cobra.Command {
+func newStatusCmd(registry *driver.Registry) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show current migration status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			d, req, err := buildDriverAndRequest(cmd)
+			d, req, err := buildRunnerAndRequest(cmd, registry)
 			if err != nil {
 				return err
 			}
-			st, err := d.Status(context.Background(), req)
+			st, err := d.Status(cmd.Context(), req)
 			if err != nil {
 				return fmt.Errorf("migrate status: %w", err)
 			}
-			writeStatus(cmd.OutOrStdout(), st)
-			return nil
+			return writeStatus(cmd.OutOrStdout(), st)
 		},
 	}
-	sharedFlags(cmd)
+	runnerFlags(cmd)
 	return cmd
 }
 
-func writeStatus(out io.Writer, st interfaces.MigrationStatus) {
+func writeStatus(out io.Writer, st interfaces.MigrationStatus) error {
+	var text string
 	if st.Current == "" {
-		fmt.Fprintln(out, "No migrations applied.")
+		text = "No migrations applied.\n"
 	} else {
-		fmt.Fprintf(out, "Current: %s\n", st.Current)
+		text = fmt.Sprintf("Current: %s\n", st.Current)
 	}
 	if len(st.Pending) > 0 {
-		fmt.Fprintf(out, "Pending: %v\n", st.Pending)
+		text += fmt.Sprintf("Pending: %v\n", st.Pending)
 	} else {
-		fmt.Fprintln(out, "No pending migrations.")
+		text += "No pending migrations.\n"
 	}
-	fmt.Fprintf(out, "Dirty: %t\n", st.Dirty)
+	text += fmt.Sprintf("Dirty: %t\n", st.Dirty)
 	if st.Dirty {
-		fmt.Fprintln(out, "WARNING: database is in dirty state!")
+		text += "WARNING: database is in dirty state!\n"
 	}
+	_, err := io.WriteString(out, text)
+	return err
 }
 
-func newGotoCmd() *cobra.Command {
+func newGotoCmd(registry *driver.Registry) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "goto <version>",
 		Short: "Migrate to a specific version (up or down)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			d, req, err := buildDriverAndRequest(cmd)
+			d, req, err := buildRunnerAndRequest(cmd, registry)
 			if err != nil {
 				return err
 			}
 			target := args[0]
-			result, err := d.Goto(context.Background(), req, target)
+			result, err := d.Goto(cmd.Context(), req, target)
 			if err != nil {
 				return fmt.Errorf("migrate goto %s: %w", target, err)
 			}
-			fmt.Printf("Migrated to %s (%d steps): %v\n", target, len(result.Applied), result.Applied)
-			return nil
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Migrated to %s (%d steps): %v\n", target, len(result.Applied), result.Applied)
+			return err
 		},
 	}
-	sharedFlags(cmd)
+	runnerFlags(cmd)
 	return cmd
 }
 

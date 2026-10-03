@@ -30,10 +30,10 @@ type atlasExecutor interface {
 
 // openForTest is the seam tests use to bypass real DB setup. Production
 // calls go straight through to open().
-var openForTest = func(req interfaces.MigrationRequest) (
+var openForTest = func(ctx context.Context, req interfaces.MigrationRequest) (
 	*sql.DB, *atlmigrate.LocalDir, *sqlRevisionRW, atlmigrate.Driver, func(), error,
 ) {
-	return open(req)
+	return open(ctx, req)
 }
 
 // newAtlasExecutorForTest is the seam tests use to inject a fake executor.
@@ -77,7 +77,7 @@ func (d *Driver) Up(ctx context.Context, req interfaces.MigrationRequest) (inter
 	}
 	start := time.Now()
 
-	db, dir, rrw, drv, cleanup, err := openForTest(req)
+	db, dir, rrw, drv, cleanup, err := openForTest(ctx, req)
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
@@ -125,7 +125,7 @@ func (d *Driver) Down(ctx context.Context, req interfaces.MigrationRequest) (int
 	}
 	start := time.Now()
 
-	db, _, rrw, _, cleanup, err := open(req)
+	db, _, rrw, _, cleanup, err := open(ctx, req)
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
@@ -183,7 +183,7 @@ func (d *Driver) Status(ctx context.Context, req interfaces.MigrationRequest) (i
 		return interfaces.MigrationStatus{}, err
 	}
 
-	db, dir, rrw, drv, cleanup, err := openForTest(req)
+	db, dir, rrw, drv, cleanup, err := openForTest(ctx, req)
 	if err != nil {
 		return interfaces.MigrationStatus{}, err
 	}
@@ -237,7 +237,7 @@ func (d *Driver) Goto(ctx context.Context, req interfaces.MigrationRequest, targ
 	}
 	start := time.Now()
 
-	db, dir, rrw, drv, cleanup, err := open(req)
+	db, dir, rrw, drv, cleanup, err := open(ctx, req)
 	if err != nil {
 		return interfaces.MigrationResult{}, err
 	}
@@ -286,7 +286,7 @@ func (d *Driver) Goto(ctx context.Context, req interfaces.MigrationRequest, targ
 }
 
 // open builds all the objects needed to talk to the database and the migration dir.
-func open(req interfaces.MigrationRequest) (
+func open(ctx context.Context, req interfaces.MigrationRequest) (
 	db *sql.DB,
 	dir *atlmigrate.LocalDir,
 	rrw *sqlRevisionRW,
@@ -294,6 +294,9 @@ func open(req interfaces.MigrationRequest) (
 	cleanup func(),
 	err error,
 ) {
+	if err = ctx.Err(); err != nil {
+		return
+	}
 	db, err = sql.Open("pgx", req.DSN)
 	if err != nil {
 		err = fmt.Errorf("atlas: open db: %w", err)
@@ -307,14 +310,14 @@ func open(req interfaces.MigrationRequest) (
 		return
 	}
 
-	rrw, err = newSQLRevisionRW(db, "")
+	rrw, err = newSQLRevisionRW(ctx, db, "")
 	if err != nil {
 		_ = db.Close()
 		err = fmt.Errorf("atlas: revisions table: %w", err)
 		return
 	}
 
-	drv, err = atlpg.Open(db)
+	drv, err = atlpg.Open(operationQuerier{DB: db, ctx: ctx})
 	if err != nil {
 		_ = db.Close()
 		err = fmt.Errorf("atlas: postgres driver: %w", err)
@@ -323,6 +326,27 @@ func open(req interfaces.MigrationRequest) (
 
 	cleanup = func() { _ = db.Close() }
 	return
+}
+
+// Atlas initializes with Background; bind unbounded library calls to this operation.
+type operationQuerier struct {
+	*sql.DB
+	ctx context.Context
+}
+
+func (q operationQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return q.DB.QueryContext(q.boundedContext(ctx), query, args...)
+}
+
+func (q operationQuerier) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return q.DB.ExecContext(q.boundedContext(ctx), query, args...)
+}
+
+func (q operationQuerier) boundedContext(ctx context.Context) context.Context {
+	if ctx.Done() == nil {
+		return q.ctx
+	}
+	return ctx
 }
 
 // openDir opens a LocalDir, auto-generating atlas.sum if it is absent.

@@ -65,7 +65,7 @@ func TestRunWithRecover_PropagatesNonPanicErrors(t *testing.T) {
 func TestUp_RecoversAtlasExecutorPanic(t *testing.T) {
 	// Seam out open() to bypass real DB setup.
 	oldOpen := openForTest
-	openForTest = func(_ interfaces.MigrationRequest) (*sql.DB, *atlmigrate.LocalDir, *sqlRevisionRW, atlmigrate.Driver, func(), error) {
+	openForTest = func(_ context.Context, _ interfaces.MigrationRequest) (*sql.DB, *atlmigrate.LocalDir, *sqlRevisionRW, atlmigrate.Driver, func(), error) {
 		return nil, nil, &sqlRevisionRW{}, nil, func() {}, nil
 	}
 	defer func() { openForTest = oldOpen }()
@@ -90,6 +90,20 @@ func TestUp_RecoversAtlasExecutorPanic(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "index out of range") {
 		t.Errorf("Up: error should describe panic value; got %v", err)
+	}
+}
+
+func TestAtlasLibraryContextBound(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := operationQuerier{ctx: ctx}
+	if got := q.boundedContext(context.Background()); got != ctx {
+		t.Fatal("unbounded Atlas initialization does not use operation context")
+	}
+	child, stop := context.WithCancel(ctx)
+	defer stop()
+	if got := q.boundedContext(child); got != child {
+		t.Fatal("Atlas child-operation context was replaced")
 	}
 }
 
